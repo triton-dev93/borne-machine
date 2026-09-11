@@ -1,0 +1,18 @@
+[Unit]
+Description=Borne d'accueil du Triton
+# La session graphique doit être là : sans ça, Chrome démarre avant le compositeur et meurt.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Le jeton n'est PAS dans cette unité : il vit dans un fichier à part, lisible du seul utilisateur
+# de la borne, pour ne pas apparaître dans `systemctl status` ni dans le journal.
+EnvironmentFile=%h/.config/borne/env
+ExecStart=/usr/local/bin/borne-lancer
+# Si quelqu'un ferme la fenêtre, elle revient. C'est la moitié de la robustesse d'une borne.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

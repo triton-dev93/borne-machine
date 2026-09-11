@@ -1,0 +1,36 @@
+{
+  "_commentaire": "Politiques Chrome de la borne. Un FICHIER DE POLITIQUE, pas des drapeaux de ligne de commande : les drapeaux se perdent au premier script modifié, une politique s'applique quoi qu'il arrive. À déposer dans /etc/opt/chrome/policies/managed/.",
+
+  "URLBlocklist": ["*"],
+  "URLAllowlist": [
+    "https://BORNE_DOMAINE",
+    "https://js.stripe.com",
+    "https://api.stripe.com",
+    "https://m.stripe.network",
+    "https://hooks.stripe.com"
+  ],
+
+  "_carte": "SANS CETTE LIGNE, Chrome propose d'enregistrer la carte et le client suivant la voit.",
+  "AutofillCreditCardEnabled": false,
+  "AutofillAddressEnabled": false,
+  "PasswordManagerEnabled": false,
+
+  "_fouille": "Sinon quelqu'un ouvre les outils de développement et fouille.",
+  "DeveloperToolsAvailability": 2,
+
+  "DownloadRestrictions": 3,
+  "PrintingEnabled": false,
+  "TranslateEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "MetricsReportingEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "BackgroundModeEnabled": false,
+  "PromptForDownloadLocation": false,
+  "ShowHomeButton": false,
+  "BookmarkBarEnabled": false,
+  "AutoFillEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "ComponentUpdatesEnabled": true
+}

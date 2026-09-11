@@ -1,0 +1,23 @@
+#!/bin/sh
+# Lancement du navigateur de la borne.
+#
+# Le jeton est REPRÉSENTÉ À CHAQUE DÉMARRAGE plutôt que gardé dans un cookie : un profil effacé,
+# une mise à jour de Chrome ou un plantage ne doivent pas laisser la borne morte jusqu'à ce que
+# quelqu'un traverse la salle. C'est aussi ce qui permet `--incognito`, donc aucun état persistant
+# d'un démarrage à l'autre.
+set -eu
+
+: "${BORNE_URL:?BORNE_URL manquant dans ~/.config/borne/env}"
+: "${BORNE_JETON:?BORNE_JETON manquant dans ~/.config/borne/env}"
+
+exec google-chrome-stable \
+    --kiosk \
+    --incognito \
+    --noerrdialogs \
+    --disable-session-crashed-bubble \
+    --disable-infobars \
+    --disable-features=TranslateUI \
+    --check-for-update-interval=31536000 \
+    --password-store=basic \
+    --ozone-platform-hint=auto \
+    "${BORNE_URL}/?j=${BORNE_JETON}"

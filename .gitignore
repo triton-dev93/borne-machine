@@ -1,0 +1,3 @@
+# Le jeton n'a rien à faire ici : il est saisi à l'installation et vit sur la machine seule.
+env
+*.local
