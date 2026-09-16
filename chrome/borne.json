@@ -15,6 +15,11 @@
   "AutofillAddressEnabled": false,
   "PasswordManagerEnabled": false,
 
+  "_camera": "La voie rapide lit la carte de membre à la caméra. L'autorisation est ACCORDÉE d'avance au seul domaine de la borne : personne ne doit avoir à répondre à une fenêtre du navigateur debout devant un écran. Partout ailleurs, la caméra reste refusée.",
+  "VideoCaptureAllowedUrls": ["https://BORNE_DOMAINE"],
+  "DefaultMediaStreamSetting": 2,
+  "AudioCaptureAllowed": false,
+
   "_fouille": "Sinon quelqu'un ouvre les outils de développement et fouille.",
   "DeveloperToolsAvailability": 2,
 

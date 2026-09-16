@@ -44,6 +44,7 @@ le relancer ne casse rien et met à jour ce qui a changé.
 | Tailscale | inscrit avec une clé **taguée** |
 | Redémarrage nocturne | 5 h du matin |
 | Imprimante à cartes | démon `borne-imprimante`, venv dédié, règle udev, utilisateur système |
+| Caméra | autorisée d'avance pour le seul domaine de la borne (voie rapide : lire la carte de membre) |
 
 ## Deux pièges qui coûtent cher
 
@@ -127,3 +128,23 @@ Les PNG sortent dans le dossier au lieu de l'imprimante, et `EVOLIS_FACTICE_ETAT
 (`ruban_fini`, `chargeur_vide`, `capot_ouvert`, `bourrage`, `hors_ligne`…). Tout le reste est
 identique, accusés compris : la file, les reprises, les lots et les écrans se recettent avant que
 le colis arrive.
+
+
+## La voie rapide : lire la carte de membre
+
+Taper une adresse sur un clavier virtuel est le geste le plus long de la borne, et celui qu'un
+abonné refait à chaque venue. Une **caméra** posée au-dessus de l'écran le remplace : on approche sa
+carte, le code se lit, la personne est reconnue.
+
+C'est un **réglage par borne**, fermé par défaut : Système → Bornes → « Lecture de carte à la
+caméra ». Une borne sans objectif ne doit pas proposer un carré de lecture qui ne mène nulle part.
+
+Deux choses à savoir :
+
+- **L'image ne quitte jamais la page.** Le décodage se fait dans le navigateur ; seul le code lu
+  part au serveur. C'est écrit à l'écran, et c'est vrai.
+- **L'autorisation caméra est accordée d'avance** au domaine de la borne (`VideoCaptureAllowedUrls`)
+  et refusée partout ailleurs, micro compris. Personne ne doit répondre à une fenêtre du navigateur
+  debout devant un écran.
+
+Une caméra USB ordinaire suffit ; la carte se présente à plat, à une vingtaine de centimètres.
