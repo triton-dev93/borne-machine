@@ -13,6 +13,9 @@ set -eu
 exec google-chrome-stable \
     --kiosk \
     --incognito \
+    `# ⚠ PAS de --kiosk-printing : le navigateur n'imprime plus rien. La carte de membre sort de` \
+    `# l'imprimante à cartes, par la file et le démon (borne-imprimante.service). Un chemin` \
+    `# d'impression de secours jamais exercé est un chemin qui ne marche pas le soir où il sert.` \
     --noerrdialogs \
     --disable-session-crashed-bubble \
     --disable-infobars \

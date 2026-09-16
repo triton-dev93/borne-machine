@@ -1,0 +1,6 @@
+# L'imprimante à cartes est un périphérique USB : sans cette règle, seul root la voit, et le démon
+# — qui n'est pas root, et ne doit pas l'être — échouerait à l'ouvrir sans rien dire de clair.
+#
+# 0x09a9 = Evolis. Le modèle exact se relève au `lsusb` à réception ; la règle couvre le
+# constructeur entier, ce qui évite d'avoir à la retoucher si l'imprimante est remplacée.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="09a9", MODE="0660", GROUP="borne-imprimante"

@@ -1,0 +1,9 @@
+# Le SDK du constructeur : libevolis (x86_64, arm64, arm32) est embarqué dans la roue, rien
+# d'autre à installer. La Zenius 2 y est nommément supportée (Model.Evolis_Zenius_2_Classic).
+evolis_sdk>=9.4.1
+requests>=2.31
+
+# Pour vérifier la géométrie de la carte, la redresser si besoin, et la centrer sur le panneau
+# attendu par l'imprimante. Une feuille A4 envoyée par erreur à une imprimante à cartes sortirait
+# en bouillie, silencieusement, sur du PVC qu'on ne récupère pas.
+Pillow>=10.0

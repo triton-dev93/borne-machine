@@ -1,0 +1,41 @@
+[Unit]
+Description=Démon d'impression de la borne du Triton
+Documentation=https://github.com/triton/borne-machine
+# Il ne lui faut PAS de session graphique : il ne dessine rien, il parle à l'USB et au réseau.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=borne-imprimante
+Group=borne-imprimante
+# Le jeton vit dans un fichier à part, lisible du seul service : il n'apparaît ni dans
+# `systemctl status`, ni dans le journal, ni dans la table des processus.
+EnvironmentFile=/etc/borne/imprimante.env
+ExecStart=/opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py
+Restart=always
+RestartSec=5
+
+# Les PDF et les PNG ne touchent jamais un disque : une carte porte un nom, et la machine est
+# dans un hall public.
+RuntimeDirectory=borne-imprimante
+RuntimeDirectoryMode=0700
+
+# Il imprime, et rien d'autre. Ce durcissement n'est pas décoratif : c'est ce qui rend vraie la
+# phrase « il ne peut pas exécuter d'ordre ».
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

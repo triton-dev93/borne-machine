@@ -1,3 +1,7 @@
 # Le jeton n'a rien à faire ici : il est saisi à l'installation et vit sur la machine seule.
 env
 *.local
+
+# Le démon est un programme Python : ses caches ne regardent personne.
+__pycache__/
+*.pyc

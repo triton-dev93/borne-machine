@@ -19,6 +19,7 @@
   "DeveloperToolsAvailability": 2,
 
   "DownloadRestrictions": 3,
+  "_impression": "Le navigateur n'imprime RIEN. La carte de membre sort de l'imprimante à cartes par le démon borne-imprimante, qui tire les travaux de la file : un seul chemin d'impression, celui qui rend compte. Laisser l'impression ouverte ne servirait qu'à sortir une page par accident.",
   "PrintingEnabled": false,
   "TranslateEnabled": false,
   "BrowserSignin": 0,

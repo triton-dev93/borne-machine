@@ -19,17 +19,24 @@ dire() { printf '\n\033[1;33m▸ %s\033[0m\n' "$*"; }
 DOMAINE="${BORNE_DOMAINE:-}"
 JETON="${BORNE_JETON:-}"
 TAILSCALE_CLE="${TAILSCALE_CLE:-}"
+JETON_IMPRESSION="${BORNE_JETON_IMPRESSION:-}"
 
 [[ -n "$DOMAINE" ]] || read -rp "Domaine de la borne (ex. borne.letriton.com) : " DOMAINE
 [[ -n "$JETON" ]]   || read -rsp "Jeton de la borne (affiché une seule fois dans l'admin) : " JETON && echo
 [[ -n "$TAILSCALE_CLE" ]] || read -rsp "Clé d'authentification Tailscale TAGUÉE (vide = ignorer) : " TAILSCALE_CLE && echo
+# Le SECOND jeton, celui du démon d'impression. Deux secrets à portée disjointe plutôt que deux
+# copies d'un seul : celui-ci n'ouvre que la file d'impression, et il vit dans un autre fichier,
+# lisible d'un autre utilisateur.
+[[ -n "$JETON_IMPRESSION" ]] || read -rsp "Jeton d'IMPRESSION de la borne (vide = pas d'imprimante) : " JETON_IMPRESSION && echo
 
 # ── Paquets ──────────────────────────────────────────────────────────────────
 dire "Paquets"
 apt-get update -qq
 # gnome-kiosk : un compositeur Wayland minimal, sans panneau ni dock, qui lance une application en
 # plein écran. C'est fait pour ça — bien moins de surface à verrouiller qu'un bureau complet.
-apt-get install -y -qq gnome-kiosk curl ca-certificates >/dev/null
+# poppler-utils : `pdftoppm` rasterise le PDF de la carte en PNG 1 bit à 300 dpi — c'est le démon
+# qui décide de la trame, pas un pilote. python3-venv : le SDK Evolis s'installe à part du système.
+apt-get install -y -qq gnome-kiosk curl ca-certificates poppler-utils python3-venv python3-pip >/dev/null
 
 if ! command -v google-chrome-stable >/dev/null; then
     dire "Google Chrome"
@@ -112,6 +119,42 @@ X-GNOME-Autostart-enabled=true
 AUTOSTART
 chown "$UTILISATEUR:$UTILISATEUR" "$MAISON/.config/autostart/borne-reglages.desktop"
 
+# ── L'imprimante à cartes et son démon ───────────────────────────────────────
+# Le navigateur n'imprime rien : il pose un travail dans la file, ce démon le tire, l'imprime sur
+# l'Evolis et accuse réception. Il TIRE, il n'écoute pas — aucun port ouvert, aucune commande reçue.
+if [[ -n "$JETON_IMPRESSION" ]]; then
+    dire "Imprimante à cartes"
+
+    id -u borne-imprimante >/dev/null 2>&1 || adduser --system --group --no-create-home borne-imprimante
+
+    # ⚠ Sans cette règle udev, seul root voit l'imprimante USB : le démon échouerait à l'ouvrir
+    # sans rien dire de clair. Le modèle exact se relève au `lsusb` ; la règle couvre le constructeur.
+    install -m 0644 "$ICI/imprimante/99-evolis.rules" /etc/udev/rules.d/99-evolis.rules
+    udevadm control --reload-rules && udevadm trigger --subsystem-match=usb || true
+
+    install -d -m 0755 /opt/borne
+    install -d -m 0755 /opt/borne/imprimante
+    install -m 0755 "$ICI/imprimante/borne_imprimante.py" /opt/borne/imprimante/borne_imprimante.py
+    install -m 0644 "$ICI/imprimante/requirements.txt" /opt/borne/imprimante/requirements.txt
+
+    [[ -d /opt/borne/venv ]] || python3 -m venv /opt/borne/venv
+    /opt/borne/venv/bin/pip install -q --upgrade pip
+    /opt/borne/venv/bin/pip install -q -r /opt/borne/imprimante/requirements.txt
+
+    install -d -m 0755 /etc/borne
+    printf 'BORNE_URL=https://%s\nBORNE_JETON_IMPRESSION=%s\n' "$DOMAINE" "$JETON_IMPRESSION" > /etc/borne/imprimante.env
+    chown root:borne-imprimante /etc/borne/imprimante.env
+    chmod 0640 /etc/borne/imprimante.env
+
+    install -m 0644 "$ICI/systemd/borne-imprimante.service" /etc/systemd/system/borne-imprimante.service
+    systemctl daemon-reload
+    systemctl enable --now borne-imprimante.service
+
+    echo "  (vérifier : /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --etat)"
+else
+    echo "  (pas de jeton d'impression : cette borne n'imprimera pas de carte)"
+fi
+
 # ── Tailscale ────────────────────────────────────────────────────────────────
 if [[ -n "$TAILSCALE_CLE" ]]; then
     dire "Tailscale"
@@ -152,6 +195,12 @@ cat <<FIN
   Redémarrez la machine : elle ouvrira sa session seule et affichera le programme.
 
   Vérifier ensuite, depuis l'administration :
-    Système → Bornes d'accueil → la colonne « Dernière activité » doit se remplir.
+    Système → Bornes d'accueil → la colonne « Dernière activité » doit se remplir,
+    et la colonne « Imprimante » passer à « Prête » dans la minute.
+
+  Avant la première vraie carte, sur la machine :
+    /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --etat
+    /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --calibrage
+  puis MESURER le cadre de la carte de calibrage : il doit être à 2 mm de chaque bord.
 
 FIN
