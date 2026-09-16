@@ -104,6 +104,10 @@ lsusb | grep -i evolis        # relever l'identifiant si la règle udev doit êt
 /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --calibrage   # puis MESURER
 ```
 
+Deux réglages sont là si la géométrie ne tombe pas juste — mais ils ne devraient pas servir :
+`EVOLIS_BITMAP` (le panneau, `648x1016` par défaut) et `EVOLIS_ORIENTATION` (`PORTRAIT`, l'autre
+valeur étant `LANDSCAPE_CC90`).
+
 **Mesurer la carte de calibrage au pied à coulisse** : son cadre doit tomber à **2 mm** de chaque
 bord. S'il dérive, le QR d'une vraie carte dériverait d'autant — et un QR hors zone ne se scanne pas
 à l'entrée.

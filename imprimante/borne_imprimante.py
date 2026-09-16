@@ -59,13 +59,16 @@ DPI = 300
 #: La carte elle-même, 54 × 86 mm à 300 dpi. C'est ce que le PDF doit produire, au pixel près.
 CARTE_PX = (638, 1016)
 
-#: Ce que l'Evolis attend comme panneau : 648 × 1016, soit la carte plus ~0,85 mm de fond perdu sur
-#: le petit côté. On CENTRE la carte dessus plutôt que de l'étirer — un QR étiré reste lisible, mais
-#: on ne déforme pas un document qu'on n'a pas dessiné.
-#: ⚠ À CONFIRMER sur le matériel : c'est le seul chiffre de ce fichier qui vienne de la
-#: documentation du constructeur et non d'une vérification. `EVOLIS_BITMAP=` (vide) le désactive,
-#: `EVOLIS_BITMAP=LxH` le change. La carte de calibrage (`--calibrage`) est là pour trancher.
+#: Le panneau de l'Evolis : 648 × 1016 en portrait — la carte plus ~0,85 mm de fond perdu sur le
+#: petit côté. (Vérifié dans `libevolis.so`, qui porte ses géométries par défaut sous les noms
+#: `defaultIso1016x648` / `defaultAfnor1016x648`, et embarque un redimensionneur : il accepterait
+#: autre chose, mais en l'étirant.) On CENTRE donc la carte dessus plutôt que de la laisser étirer.
+#: `EVOLIS_BITMAP=` (vide) désactive, `EVOLIS_BITMAP=LxH` change.
 BITMAP = os.environ.get("EVOLIS_BITMAP", "648x1016")
+
+#: Notre carte est dessinée en PORTRAIT (54 de large, 86 de haut). On le DÉCLARE au pilote plutôt
+#: que d'espérer qu'il devine : `SettingKey.Orientation` accepte PORTRAIT ou LANDSCAPE_CC90.
+ORIENTATION = os.environ.get("EVOLIS_ORIENTATION", "PORTRAIT")
 
 #: Une carte n'est pas coupée au millimètre près : on tolère l'arrondi de pdftoppm, pas plus.
 TOLERANCE_PX = 3
@@ -240,6 +243,11 @@ class Evolis:
             if not session.init_with_ribbon(getattr(self.evolis.RibbonType, self.RUBAN)):
                 # Ruban couleur monté par erreur, ou ruban non reconnu : on ne force pas, on le dit.
                 raise ImpressionImpossible("ruban_inconnu", "le ruban en place n'est pas un ruban noir")
+
+            if ORIENTATION:
+                # Déclarer l'orientation plutôt que de la laisser deviner : une carte portrait
+                # imprimée en paysage est une carte perdue, et le PVC ne se recycle pas.
+                session.set_setting(self.evolis.SettingKey.Orientation, ORIENTATION)
 
             if not session.set_black(self.evolis.CardFace.FRONT, str(png)):
                 raise ImpressionImpossible("erreur", "image refusée par le pilote")
