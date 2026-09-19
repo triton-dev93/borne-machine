@@ -85,6 +85,10 @@ chmod 0644 /etc/opt/chrome/policies/managed/borne.json
 # ── Lancement, et relance si la fenêtre se ferme ─────────────────────────────
 dire "Service de lancement"
 install -m 0755 "$ICI/borne-lancer" /usr/local/bin/borne-lancer
+# La commande d'exploitation. Sans elle, relancer le kiosque demande de savoir que son service est
+# un service UTILISATEUR et de reconstituer `XDG_RUNTIME_DIR` — ce que personne ne tape juste un
+# soir de concert.
+install -m 0755 "$ICI/borne" /usr/local/bin/borne
 install -d -m 0755 -o "$UTILISATEUR" -g "$UTILISATEUR" "$MAISON/.config/systemd/user"
 install -m 0644 -o "$UTILISATEUR" -g "$UTILISATEUR" "$ICI/systemd/borne.service" "$MAISON/.config/systemd/user/borne.service"
 # `linger` : le service utilisateur survit à l'absence de session interactive.

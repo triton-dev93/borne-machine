@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+#
+# `borne` — la commande d'exploitation de la machine du hall.
+#
+# Elle n'apporte aucune fonction nouvelle : elle rend simple ce qui était exact mais imprononçable.
+# Relancer le kiosque demandait `sudo -u borne XDG_RUNTIME_DIR=/run/user/1001 systemctl --user
+# restart borne` ; changer un jeton demandait d'éditer un fichier en 0600 dont on cassait les
+# droits une fois sur deux. Un soir de concert, personne ne tape ça correctement.
+#
+# Deux principes :
+#   • ON NE MONTRE JAMAIS UN JETON, seulement son empreinte — comparable à l'administration,
+#     lisible à voix haute au téléphone.
+#   • CHANGER UN JETON, C'EST LE VÉRIFIER. La commande appelle l'adresse derrière et dit ce qu'elle
+#     obtient. Sans ça, changer un jeton reste un pari qu'on ne perd qu'une heure plus tard.
+set -euo pipefail
+
+# Se relancer en root plutôt que de le reprocher : l'exploitant n'a pas à savoir que ça en demande.
+[[ $EUID -eq 0 ]] || exec sudo -- "$0" "$@"
+
+UTILISATEUR="${BORNE_USER:-borne}"
+MAISON="$(getent passwd "$UTILISATEUR" 2>/dev/null | cut -d: -f6 || true)"
+ENV_ECRAN="${MAISON:-/home/$UTILISATEUR}/.config/borne/env"
+ENV_DEMON="/etc/borne/imprimante.env"
+POLITIQUE="/etc/opt/chrome/policies/managed/borne.json"
+ECARTEE="/etc/opt/chrome/policies/managed/.borne.json.ecartee"
+# ⚠ La commande est COPIÉE dans /usr/local/bin : son voisinage n'est pas le dépôt. On vise le
+# clone, et on retombe sur le voisinage seulement s'il se trouve en être un.
+DEPOT="${BORNE_DEPOT:-/opt/borne}"
+[[ -d "$DEPOT/.git" ]] || DEPOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+gras()  { printf '\033[1m%s\033[0m\n' "$*"; }
+vert()  { printf '  \033[32m%s\033[0m\n' "$*"; }
+rouge() { printf '  \033[31m%s\033[0m\n' "$*"; }
+jaune() { printf '  \033[33m%s\033[0m\n' "$*"; }
+gris()  { printf '  \033[90m%s\033[0m\n' "$*"; }
+
+# ── Le service du kiosque est un service UTILISATEUR : toute la gymnastique tient ici ───────────
+uctl() {
+    local uid
+    uid="$(id -u "$UTILISATEUR" 2>/dev/null || echo 0)"
+    sudo -u "$UTILISATEUR" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user "$@"
+}
+
+lire()      { [[ -r "$1" ]] && grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true; }
+empreinte() { [[ -n "${1:-}" ]] && printf '%s' "$1" | sha256sum | cut -c1-12 || echo '—'; }
+
+# Réécrit une clef en PRÉSERVANT propriétaire et droits : les reposer à la main les casse une fois
+# sur deux, et le service tombe alors sans rien dire.
+ecrire() {
+    local fichier="$1" clef="$2" valeur="$3" tmp
+    tmp="$(mktemp)"
+    { grep -vE "^$clef=" "$fichier" 2>/dev/null || true; printf '%s=%s\n' "$clef" "$valeur"; } > "$tmp"
+    cat "$tmp" > "$fichier"          # `cat >` et non `mv` : le fichier garde ses droits d'origine
+    rm -f "$tmp"
+}
+
+# Si un `borne chrome --outils` s'est fait tuer sans repasser par son `trap`, la politique serait
+# restée écartée — et la borne tournerait sans liste blanche. On répare à CHAQUE invocation.
+reparer_politique() {
+    if [[ -f "$ECARTEE" ]] && ! pgrep -u "$UTILISATEUR" -f 'google-chrome' >/dev/null 2>&1; then
+        mv -f "$ECARTEE" "$POLITIQUE"
+        jaune "Politique Chrome remise en place (une session de débogage ne s'était pas refermée)."
+    fi
+}
+
+# ── Sonder l'adresse avec le jeton : 302 = bon, 404 = mauvais jeton ─────────────────────────────
+sonder() {
+    local url jeton code
+    url="$(lire "$ENV_ECRAN" BORNE_URL)"
+    jeton="$(lire "$ENV_ECRAN" BORNE_JETON)"
+    [[ -n "$url" && -n "$jeton" ]] || { rouge "Adresse ou jeton absent de $ENV_ECRAN."; return 1; }
+
+    code="$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$url/?j=$jeton" 2>/dev/null || echo 000)"
+
+    case "$code" in
+        302|200) vert "Le site répond et accepte ce jeton ($code)." ;;
+        404)     rouge "404 — ce jeton n'est pas reconnu. Le bon est-il celui de l'ÉCRAN ? (l'autre est celui d'impression)"; return 1 ;;
+        401)     jaune "401 — le site demande les identifiants de recette sur ce domaine. La borne devrait en être exemptée." ; return 1 ;;
+        000)     rouge "Aucune réponse : DNS, réseau, ou site à l'arrêt." ; return 1 ;;
+        *)       jaune "Réponse inattendue : $code" ; return 1 ;;
+    esac
+}
+
+# ⚠ Pose JETON_SAISI, ne le rend PAS sur la sortie standard : un `$(...)` avalerait aussi le saut
+# de ligne de la saisie et les avertissements, et les collerait au jeton. Une heure de perdue.
+JETON_SAISI=''
+demander_jeton() {
+    local invite="$1" saisi
+    read -rsp "$invite" saisi; echo
+    saisi="$(printf '%s' "$saisi" | tr -d '[:space:]')"   # un copier-coller traîne souvent un saut de ligne
+    [[ -n "$saisi" ]] || { rouge "Rien saisi, rien changé."; exit 1; }
+    [[ ${#saisi} -eq 48 ]] || jaune "⚠ Ce jeton fait ${#saisi} caractères au lieu de 48 — copie tronquée ?"
+    JETON_SAISI="$saisi"
+}
+
+# ── Les commandes ───────────────────────────────────────────────────────────────────────────────
+
+cmd_etat() {
+    local url je ji
+    url="$(lire "$ENV_ECRAN" BORNE_URL)"
+    je="$(lire "$ENV_ECRAN" BORNE_JETON)"
+    ji="$(lire "$ENV_DEMON" BORNE_JETON_IMPRESSION)"
+
+    gras "Écran"
+    if uctl is-active --quiet borne 2>/dev/null; then vert "kiosque actif"; else rouge "kiosque ARRÊTÉ"; fi
+    gris "adresse   : ${url:-—}"
+    gris "empreinte : $(empreinte "$je")   (à comparer avec l'administration)"
+
+    gras "Imprimante"
+    if [[ -f "$ENV_DEMON" ]]; then
+        if systemctl is-active --quiet borne-imprimante 2>/dev/null; then vert "démon actif"; else rouge "démon ARRÊTÉ"; fi
+        gris "empreinte : $(empreinte "$ji")"
+    else
+        gris "pas configurée sur cette machine"
+    fi
+
+    gras "Le site répond ?"
+    sonder || true
+
+    gras "Tailscale"
+    if command -v tailscale >/dev/null 2>&1; then
+        gris "$(tailscale status --peers=false 2>/dev/null | head -1 || echo 'hors ligne')"
+    else
+        gris "non installé"
+    fi
+}
+
+cmd_stop() {
+    if [[ "${1:-}" == "tout" ]]; then
+        systemctl stop borne-imprimante 2>/dev/null || true
+        vert "Démon d'impression arrêté."
+    fi
+    uctl stop borne 2>/dev/null || true
+    vert "Kiosque arrêté — il ne redémarrera pas tout seul."
+    gris "Il reviendra au redémarrage nocturne de 5 h, ou avec « borne demarre »."
+}
+
+cmd_demarre() { uctl start borne;   vert "Kiosque démarré."; }
+cmd_relance() { uctl restart borne; vert "Kiosque relancé."; }
+
+cmd_jeton() {
+    demander_jeton 'Nouveau jeton d ÉCRAN (il ne s affiche pas) : '
+    ecrire "$ENV_ECRAN" BORNE_JETON "$JETON_SAISI"
+    vert "Écrit dans $ENV_ECRAN."
+    uctl restart borne 2>/dev/null || true
+    gras "Vérification"
+    sonder
+}
+
+cmd_jeton_impression() {
+    [[ -f "$ENV_DEMON" ]] || { rouge "Pas d'imprimante configurée ici ($ENV_DEMON absent)."; exit 1; }
+    demander_jeton 'Nouveau jeton d IMPRESSION (il ne s affiche pas) : '
+    ecrire "$ENV_DEMON" BORNE_JETON_IMPRESSION "$JETON_SAISI"
+    vert "Écrit dans $ENV_DEMON."
+    systemctl restart borne-imprimante
+    sleep 2
+    if systemctl is-active --quiet borne-imprimante; then
+        vert "Démon relancé."
+        gris "Son acceptation se verra au premier travail : « borne journal -f »."
+    else
+        rouge "Le démon ne repart pas. « borne journal » dira pourquoi."
+    fi
+}
+
+cmd_domaine() {
+    local url="${1:-}"
+    [[ -n "$url" ]] || { rouge "Usage : borne domaine https://borne.letriton.com"; exit 1; }
+    url="${url%/}"
+    [[ "$url" == https://* ]] || jaune "⚠ Sans https, la caméra de la voie rapide ne fonctionnera pas."
+
+    ecrire "$ENV_ECRAN" BORNE_URL "$url"
+    [[ -f "$ENV_DEMON" ]] && ecrire "$ENV_DEMON" BORNE_URL "$url"
+    vert "Adresse changée partout."
+    jaune "⚠ La liste blanche de Chrome vise encore l'ancien domaine : relance « borne maj »."
+    uctl restart borne 2>/dev/null || true
+    systemctl restart borne-imprimante 2>/dev/null || true
+    sonder || true
+}
+
+cmd_journal() {
+    local suivre=()
+    [[ "${1:-}" == "-f" ]] && suivre=(-f)
+    journalctl "${suivre[@]}" -n 80 --no-pager \
+        _SYSTEMD_USER_UNIT=borne.service + UNIT=borne-imprimante.service \
+        2>/dev/null || journalctl "${suivre[@]}" -n 80 --no-pager -u borne-imprimante
+}
+
+cmd_demon() {
+    case "${1:-etat}" in
+        stop)      systemctl stop borne-imprimante;    vert "Démon arrêté." ;;
+        demarre)   systemctl start borne-imprimante;   vert "Démon démarré." ;;
+        relance)   systemctl restart borne-imprimante; vert "Démon relancé." ;;
+        etat)      /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --etat ;;
+        test)      /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --test ;;
+        calibrage) /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --calibrage ;;
+        debloquer) /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --debloquer ;;
+        *) rouge "borne demon <stop|demarre|relance|etat|test|calibrage|debloquer>"; exit 1 ;;
+    esac
+}
+
+cmd_chrome() {
+    local url je uid outils=0
+    [[ "${1:-}" == "--outils" ]] && outils=1
+
+    url="$(lire "$ENV_ECRAN" BORNE_URL)"
+    je="$(lire "$ENV_ECRAN" BORNE_JETON)"
+    uid="$(id -u "$UTILISATEUR")"
+
+    local etait_actif=0
+    uctl is-active --quiet borne 2>/dev/null && etait_actif=1
+    [[ $etait_actif -eq 1 ]] && { uctl stop borne; gris "Kiosque suspendu le temps de la session."; }
+
+    # On remet TOUT en place quoi qu'il arrive — y compris sur Ctrl-C.
+    restaurer() {
+        [[ -f "$ECARTEE" ]] && mv -f "$ECARTEE" "$POLITIQUE"
+        [[ $etait_actif -eq 1 ]] && uctl start borne 2>/dev/null || true
+        gris "Kiosque et politiques remis en place."
+    }
+    trap restaurer EXIT INT TERM
+
+    if [[ $outils -eq 1 ]]; then
+        jaune "⚠ Politique Chrome écartée : liste blanche d'URL et blocage des outils LEVÉS."
+        jaune "  Elle revient à la fermeture de cette fenêtre, et de toute façon au prochain « borne »."
+        [[ -f "$POLITIQUE" ]] && mv -f "$POLITIQUE" "$ECARTEE"
+    else
+        gris "Les outils de développement restent bloqués par la politique. « borne chrome --outils » les ouvre."
+    fi
+
+    gras "Fenêtre ouverte. Ferme-la pour rendre la main."
+    sudo -u "$UTILISATEUR" env \
+        XDG_RUNTIME_DIR="/run/user/$uid" \
+        WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}" \
+        DISPLAY="${DISPLAY:-:0}" \
+        google-chrome-stable --new-window --user-data-dir="$(mktemp -d)" "$url/?j=$je" 2>/dev/null || true
+}
+
+cmd_maj() {
+    [[ -d "$DEPOT/.git" ]] || { rouge "Ce n'est pas un clone git : $DEPOT"; exit 1; }
+    gras "Mise à jour du dépôt"
+    git -C "$DEPOT" pull --ff-only
+
+    gras "Réinstallation (idempotente, les jetons en place sont repris)"
+    gris "Il redemandera la clé Tailscale : Entrée suffit, la machine est déjà inscrite." 
+    BORNE_DOMAINE="$(lire "$ENV_ECRAN" BORNE_URL | sed 's|^https\?://||')" \
+    BORNE_JETON="$(lire "$ENV_ECRAN" BORNE_JETON)" \
+    BORNE_JETON_IMPRESSION="$(lire "$ENV_DEMON" BORNE_JETON_IMPRESSION)" \
+    TAILSCALE_CLE="" \
+        bash "$DEPOT/install.sh"
+
+    vert "À jour."
+}
+
+cmd_aide() {
+    cat <<'AIDE'
+borne — exploitation de la machine du hall
+
+  borne etat                  ce qui tourne, ce qui répond, les empreintes
+  borne stop [tout]           coupe le kiosque (et le démon avec « tout »)
+  borne demarre               le rallume
+  borne relance               l'un puis l'autre
+
+  borne jeton                 change le jeton d'ÉCRAN, relance, et VÉRIFIE
+  borne jeton-impression      change celui du démon Evolis
+  borne domaine <url>         change l'adresse dans les deux fichiers
+
+  borne journal [-f]          les traces des deux services
+  borne demon <...>           stop | demarre | relance | etat | test | calibrage | debloquer
+  borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
+  borne maj                   git pull puis réinstallation
+
+Les jetons ne s'affichent jamais : « borne etat » en donne l'empreinte, qui se
+compare à celle de l'administration sans rien divulguer.
+AIDE
+}
+
+reparer_politique
+
+case "${1:-aide}" in
+    etat|status)        cmd_etat ;;
+    stop|arrete)        shift || true; cmd_stop "${1:-}" ;;
+    demarre|start)      cmd_demarre ;;
+    relance|restart)    cmd_relance ;;
+    jeton)              cmd_jeton ;;
+    jeton-impression)   cmd_jeton_impression ;;
+    domaine)            shift || true; cmd_domaine "${1:-}" ;;
+    journal|logs)       shift || true; cmd_journal "${1:-}" ;;
+    demon)              shift || true; cmd_demon "${1:-etat}" ;;
+    chrome)             shift || true; cmd_chrome "${1:-}" ;;
+    maj)                cmd_maj ;;
+    aide|-h|--help)     cmd_aide ;;
+    *) rouge "Commande inconnue : $1"; echo; cmd_aide; exit 1 ;;
+esac

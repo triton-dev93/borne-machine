@@ -57,6 +57,46 @@ une saisie tactile, ce qui est mieux.
 mois après l'installation, sans raison visible, et personne ne ferait le lien. Un appareil **tagué**
 a l'expiration désactivée par défaut : le script l'exige.
 
+## La commande `borne`
+
+Tout se pilote par une seule commande. Elle se relance en `sudo` toute seule.
+
+```sh
+borne etat                  # ce qui tourne, ce qui répond, les empreintes des jetons
+borne stop                  # coupe le kiosque — et il ne revient PAS
+borne demarre               # le rallume
+borne relance
+
+borne jeton                 # change le jeton d'écran, relance, et VÉRIFIE que ça marche
+borne jeton-impression      # celui du démon Evolis
+borne domaine <url>         # l'adresse, dans les deux fichiers d'un coup
+
+borne journal -f            # les traces des deux services, mêlées
+borne demon etat            # stop | demarre | relance | etat | test | calibrage | debloquer
+borne chrome [--outils]     # une fenêtre normale, pour regarder la page
+borne maj                   # git pull puis réinstallation
+```
+
+**Pourquoi `borne stop` compte.** Le service du kiosque porte `Restart=always` : fermer la fenêtre
+la fait revenir deux secondes plus tard, ce qui est la moitié de la robustesse d'une borne — et
+insupportable quand on cherche une panne. `borne stop` la coupe pour de bon. Elle revient au
+redémarrage nocturne de 5 h, donc un arrêt oublié un soir se répare seul avant l'ouverture.
+
+**Les jetons ne s'affichent jamais.** `borne etat` en donne l'empreinte `sha256` sur douze
+caractères, qu'on compare à celle de l'administration, et qui se lit à voix haute au téléphone sans
+rien divulguer.
+
+**Changer un jeton, c'est le vérifier.** `borne jeton` écrit, relance, appelle l'adresse et dit ce
+qu'elle répond : `302` c'est bon, `404` le jeton n'est pas reconnu — c'est probablement celui
+d'impression, les deux s'affichent côte à côte dans l'administration. Sans cette vérification,
+changer un jeton reste un pari qu'on ne perd qu'une heure plus tard.
+
+**Où vivent les jetons**, si tu veux les regarder à la main : celui de l'écran dans
+`~borne/.config/borne/env` (0600, `borne:borne`), celui du démon dans `/etc/borne/imprimante.env`
+(0640, `root:borne-imprimante`). Les réécrire à la main casse les droits une fois sur deux et le
+service tombe sans rien dire ; la commande les repose correctement.
+
+
 ## Mettre à jour
 
 Rien à faire. La borne est une page web : un déploiement du site la met à jour au rechargement
