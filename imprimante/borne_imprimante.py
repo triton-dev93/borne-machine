@@ -78,6 +78,30 @@ TOLERANCE_PX = 3
 #: système. Un démon qui refuse de démarrer parce qu'un dossier manque serait une borne morte.
 TMPFS = Path("/run/borne-imprimante")
 
+#: L'imprimante à ouvrir, quand on veut la désigner plutôt que la laisser trouver : un nom de file
+#: CUPS, ou un nœud USB (`usb:///dev/usb/lp0`). Vide = on cherche. ⚠ Sous Linux, le SDK ne
+#: DÉCOUVRE les imprimantes qu'au travers de CUPS : sans file d'impression, `get_devices()` rend
+#: une liste vide alors même que l'USB voit l'imprimante. D'où l'ouverture directe ci-dessous.
+IMPRIMANTE = os.environ.get("EVOLIS_IMPRIMANTE", "").strip()
+
+
+def candidats_directs() -> list[str]:
+    """Les adresses à essayer sans CUPS, dans l'ordre : les nœuds d'imprimante USB présents."""
+    noeuds = sorted(str(n) for n in Path("/dev/usb").glob("lp*")) if Path("/dev/usb").is_dir() else []
+    noeuds += sorted(str(n) for n in Path("/dev").glob("usblp*"))
+    # Sans pilote d'imprimante USB (usblp), pas de /dev/usb/lp0 : il reste le nœud USB brut de
+    # l'appareil Evolis (0f49), que libevolis sait aussi ouvrir.
+    for appareil in Path("/sys/bus/usb/devices").glob("*"):
+        try:
+            if (appareil / "idVendor").read_text().strip() != "0f49":
+                continue
+            bus = int((appareil / "busnum").read_text())
+            num = int((appareil / "devnum").read_text())
+        except (OSError, ValueError):
+            continue
+        noeuds.append(f"/dev/bus/usb/{bus:03d}/{num:03d}")
+    return [f"usb://{n}" for n in noeuds] + noeuds
+
 
 def dossier_de_travail() -> Path:
     """Où poser le PDF et le PNG, quelques secondes. tmpfs si on peut, temporaire sinon."""
@@ -172,23 +196,47 @@ class Evolis:
 
         self.evolis = evolis
 
-    def _appareil(self):
-        appareils = [d for d in self.evolis.Evolis.get_devices()]
-        if not appareils:
-            raise ImpressionImpossible("hors_ligne", "aucune imprimante Evolis vue sur la machine")
-        # Une borne a une imprimante. S'il y en avait plusieurs, la première en ligne fait l'affaire.
-        return next((d for d in appareils if d.isOnline), appareils[0])
-
     def _ouvrir(self):
-        appareil = self._appareil()
-        co = self.evolis.Connection(appareil)
-        if not co.is_open():
-            raise ImpressionImpossible("hors_ligne", f"connexion refusée par {appareil.name}")
-        return appareil, co
+        """Ouvre l'imprimante : désignée, découverte par CUPS, ou à défaut par son nœud USB.
+
+        Rend `(libellé, connexion)`. Le libellé sert au journal et à dire le modèle.
+        """
+        direct = self.evolis.OpenMode.DIRECT
+
+        if IMPRIMANTE:
+            co = self.evolis.Connection(IMPRIMANTE, direct)
+            if not co.is_open():
+                raise ImpressionImpossible("hors_ligne", f"{IMPRIMANTE} ne répond pas")
+            return IMPRIMANTE, co
+
+        appareils = list(self.evolis.Evolis.get_devices())
+        if appareils:
+            # Une borne a une imprimante. S'il y en avait plusieurs, la première en ligne fait l'affaire.
+            appareil = next((d for d in appareils if d.isOnline), appareils[0])
+            co = self.evolis.Connection(appareil)
+            if not co.is_open():
+                raise ImpressionImpossible("hors_ligne", f"connexion refusée par {appareil.name}")
+            return self.evolis.Evolis.get_model_name(appareil.model), co
+
+        # Aucune file CUPS : on va la chercher sur l'USB, directement.
+        for adresse in candidats_directs():
+            co = self.evolis.Connection(adresse, direct)
+            if co.is_open():
+                return adresse, co
+        raise ImpressionImpossible("hors_ligne", "aucune imprimante Evolis joignable (ni CUPS, ni USB direct)")
+
+    def _modele(self, libelle: str, co) -> str:
+        try:
+            info = co.get_info()
+            if info is not None and info.modelName:
+                return info.modelName
+        except Exception:  # noqa: BLE001 — le modèle est un confort, pas une condition
+            pass
+        return libelle
 
     def etat(self) -> EtatImprimante:
         try:
-            appareil, co = self._ouvrir()
+            libelle, co = self._ouvrir()
         except ImpressionImpossible as panne:
             return EtatImprimante(etat="hors_ligne", motifs=[panne.motif])
         except Exception as erreur:  # le SDK lève des choses variées ; aucune ne doit tuer le démon
@@ -221,7 +269,7 @@ class Evolis:
             lu = EtatImprimante(
                 etat={"READY": "pret", "WARNING": "avertissement", "ERROR": "erreur"}.get(majeur, "hors_ligne"),
                 motifs=motifs,
-                modele=self.evolis.Evolis.get_model_name(appareil.model),
+                modele=self._modele(libelle, co),
                 nettoyage_requis="nettoyage" in motifs,
             )
 
@@ -237,7 +285,7 @@ class Evolis:
 
     def imprimer(self, png: Path) -> None:
         """Une carte. Lève {@see ImpressionImpossible} avec un motif que l'écran sait dire."""
-        appareil, co = self._ouvrir()
+        _, co = self._ouvrir()
         try:
             session = self.evolis.PrintSession(co, getattr(self.evolis.RibbonType, self.RUBAN))
             if not session.init_with_ribbon(getattr(self.evolis.RibbonType, self.RUBAN)):
@@ -274,7 +322,7 @@ class Evolis:
         return "erreur"
 
     def carte_de_test(self) -> bool:
-        appareil, co = self._ouvrir()
+        _, co = self._ouvrir()
         try:
             return self.evolis.PrintSession.print_test_card(co)
         finally:
@@ -282,7 +330,7 @@ class Evolis:
 
     def debloquer(self) -> None:
         """Après un bourrage : on efface l'erreur mécanique et on éjecte ce qui traîne."""
-        appareil, co = self._ouvrir()
+        _, co = self._ouvrir()
         try:
             co.clear_mechanical_errors()
             co.reject_card()
@@ -543,6 +591,7 @@ def main() -> int:
     parseur.add_argument("--test", action="store_true", help="imprimer la carte de test du constructeur")
     parseur.add_argument("--calibrage", action="store_true", help="imprimer une carte de repères à mesurer")
     parseur.add_argument("--debloquer", action="store_true", help="effacer une erreur mécanique et éjecter la carte")
+    parseur.add_argument("--sonde", action="store_true", help="essayer toutes les façons d'atteindre l'imprimante")
     parseur.add_argument("-v", "--verbeux", action="store_true")
     options = parseur.parse_args()
 
@@ -550,6 +599,9 @@ def main() -> int:
         level=logging.DEBUG if options.verbeux else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
+    if options.sonde:
+        return sonder()
 
     try:
         appareil = imprimante()
@@ -580,6 +632,50 @@ def main() -> int:
     signal.signal(signal.SIGINT, demon.arreter)
     demon.tourner()
     return 0
+
+
+def sonder() -> int:
+    """Essayer TOUTES les façons d'atteindre l'imprimante, et dire laquelle répond.
+
+    C'est la commande du jour J, quand « aucune imprimante » : elle ne devine rien, elle essaie.
+    """
+    import evolis
+
+    evolis.Evolis.set_log_level(evolis.LogLevel.WARNING)
+    print(f"SDK Evolis {evolis.Evolis.get_version()}")
+
+    cups = any(Path(p).exists() for p in ("/usr/lib/x86_64-linux-gnu/libcups.so.2", "/usr/lib/libcups.so.2"))
+    print(f"CUPS (libcups) : {'présent' if cups else 'ABSENT — la découverte automatique ne peut rien trouver'}")
+
+    appareils = list(evolis.Evolis.get_devices())
+    print(f"Découverte (CUPS) : {len(appareils)} imprimante(s)")
+    for d in appareils:
+        print(f"  · {d.name}  uri={d.uri}  en ligne={d.isOnline}")
+
+    essais = ([IMPRIMANTE] if IMPRIMANTE else []) + candidats_directs()
+    if not essais:
+        print("Aucun nœud USB Evolis (ni /dev/usb/lp*, ni appareil 0f49) : l'imprimante est-elle branchée ?")
+    trouvee = None
+    for adresse in essais:
+        for mode in (evolis.OpenMode.DIRECT, evolis.OpenMode.AUTO):
+            co = evolis.Connection(adresse, mode)
+            ouverte = co.is_open()
+            detail = ""
+            if ouverte:
+                info = co.get_info()
+                etat = co.get_state()
+                detail = f"  → {info.modelName if info else '?'} n° {info.serialNumber if info else '?'}, état {etat.major.name}/{etat.minor.name}"
+                trouvee = trouvee or adresse
+            print(f"  {'✓' if ouverte else '✗'} {adresse} ({mode.name}){detail}")
+            co.close()
+            if ouverte:
+                break
+
+    if trouvee:
+        print(f"\n→ L'imprimante répond sur {trouvee}. Le démon l'ouvre tout seul par ce chemin.")
+        return 0
+    print("\n→ Rien ne répond. Droits sur le nœud (groupe borne-imprimante) ? Imprimante allumée ?")
+    return 1
 
 
 def calibrage(appareil) -> int:
