@@ -30,6 +30,18 @@ sudo ./install.sh
 Le script demande le jeton et l'adresse de la borne, puis installe tout. Il est **idempotent** :
 le relancer ne casse rien et met à jour ce qui a changé.
 
+3. Le dépôt est privé : le clone demande un identifiant GitHub, **une seule fois**. Ensuite :
+
+```sh
+borne cle-github            # crée une clé de déploiement et l'affiche
+                            # → GitHub, Settings → Deploy keys → Add, « write access » DÉCOCHÉ
+borne cle-github verifier   # « borne maj » ne demandera plus rien
+```
+
+⚠ Ne jamais stocker un compte GitHub sur la borne : il ouvrirait tous les dépôts, en écriture, à
+qui s'assoit devant la machine d'un hall. La clé de déploiement ne vaut que pour ce dépôt, en
+lecture, et se révoque seule.
+
 3. Redémarrer. La machine ouvre sa session seule et affiche le programme.
 
 ## Ce que le script fait

@@ -297,6 +297,59 @@ cmd_chrome() {
         google-chrome-stable --new-window --user-data-dir="$(mktemp -d)" "$url/?j=$je" 2>/dev/null || true
 }
 
+# ── L'accès au dépôt : une clé de DÉPLOIEMENT, jamais un compte ─────────────────────────────────
+# `borne maj` demandait un nom et un mot de passe GitHub à chaque fois. Les stocker sur une machine
+# posée dans un hall public, c'était y laisser un accès à TOUS les dépôts du compte, en écriture.
+# Une clé de déploiement ne vaut que pour ce dépôt, en lecture seule, et se révoque en un clic
+# depuis GitHub sans toucher à rien d'autre.
+CLE_GITHUB="/etc/borne/github_deploiement"
+HOTES_GITHUB="/etc/borne/github_known_hosts"
+# L'empreinte publiée par GitHub (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU), épinglée :
+# on ne fait pas confiance à la première réponse venue, pas depuis un réseau de salle.
+HOTE_GITHUB="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+
+cmd_cle_github() {
+    [[ -d "$DEPOT/.git" ]] || { rouge "Ce n'est pas un clone git : $DEPOT"; exit 1; }
+    install -d -m 0755 /etc/borne
+
+    if [[ ! -f "$CLE_GITHUB" ]]; then
+        ssh-keygen -q -t ed25519 -N '' -C "borne-$(hostname)" -f "$CLE_GITHUB"
+        chmod 0600 "$CLE_GITHUB"
+        vert "Clé créée."
+    else
+        gris "Clé déjà présente : on la réutilise."
+    fi
+    printf '%s\n' "$HOTE_GITHUB" > "$HOTES_GITHUB"
+
+    # L'adresse HTTPS devient SSH, et git sait quelle clé présenter — sans rien écrire dans /root.
+    local distante chemin
+    distante="$(git -C "$DEPOT" remote get-url origin)"
+    chemin="$(printf '%s' "$distante" | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+    git -C "$DEPOT" remote set-url origin "git@github.com:${chemin}.git"
+    git -C "$DEPOT" config core.sshCommand \
+        "ssh -i $CLE_GITHUB -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOTES_GITHUB -o StrictHostKeyChecking=yes"
+    # Un ancien mot de passe mémorisé ne doit pas survivre à côté de la clé.
+    git -C "$DEPOT" config --unset-all credential.helper 2>/dev/null || true
+
+    gras "À coller dans GitHub"
+    gris "https://github.com/${chemin}/settings/keys → « Add deploy key »"
+    gris "Titre : borne-$(hostname) — et LAISSER « Allow write access » DÉCOCHÉ."
+    echo
+    cat "${CLE_GITHUB}.pub"
+    echo
+    gras "Puis vérifier"
+    gris "borne cle-github verifier"
+}
+
+cmd_cle_github_verifier() {
+    if git -C "$DEPOT" ls-remote --heads origin >/dev/null 2>&1; then
+        vert "GitHub accepte la clé : « borne maj » ne demandera plus rien."
+    else
+        rouge "GitHub refuse la clé. Est-elle bien collée dans les Deploy keys du dépôt ?"
+        exit 1
+    fi
+}
+
 cmd_maj() {
     [[ -d "$DEPOT/.git" ]] || { rouge "Ce n'est pas un clone git : $DEPOT"; exit 1; }
     gras "Mise à jour du dépôt"
@@ -331,6 +384,7 @@ borne — exploitation de la machine du hall
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
   borne maj                   git pull puis réinstallation
+  borne cle-github [verifier] l'accès au dépôt par clé de déploiement (plus de mot de passe)
 
 Les jetons ne s'affichent jamais : « borne etat » en donne l'empreinte, qui se
 compare à celle de l'administration sans rien divulguer.
@@ -351,6 +405,7 @@ case "${1:-aide}" in
     demon)              shift || true; cmd_demon "${1:-etat}" ;;
     chrome)             shift || true; cmd_chrome "${1:-}" ;;
     maj)                cmd_maj ;;
+    cle-github)         shift || true; if [[ "${1:-}" == "verifier" ]]; then cmd_cle_github_verifier; else cmd_cle_github; fi ;;
     aide|-h|--help)     cmd_aide ;;
     *) rouge "Commande inconnue : $1"; echo; cmd_aide; exit 1 ;;
 esac
