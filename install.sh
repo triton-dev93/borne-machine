@@ -36,7 +36,7 @@ apt-get update -qq
 # plein écran. C'est fait pour ça — bien moins de surface à verrouiller qu'un bureau complet.
 # poppler-utils : `pdftoppm` rasterise le PDF de la carte en PNG 1 bit à 300 dpi — c'est le démon
 # qui décide de la trame, pas un pilote. python3-venv : le SDK Evolis s'installe à part du système.
-apt-get install -y -qq gnome-kiosk curl ca-certificates poppler-utils python3-venv python3-pip >/dev/null
+apt-get install -y -qq gnome-kiosk curl ca-certificates poppler-utils ghostscript python3-venv python3-pip >/dev/null
 
 if ! command -v google-chrome-stable >/dev/null; then
     dire "Google Chrome"
@@ -134,7 +134,7 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     # ⚠ Sans cette règle udev, seul root voit l'imprimante USB : le démon échouerait à l'ouvrir
     # sans rien dire de clair. Le modèle exact se relève au `lsusb` ; la règle couvre le constructeur.
     install -m 0644 "$ICI/imprimante/99-evolis.rules" /etc/udev/rules.d/99-evolis.rules
-    udevadm control --reload-rules && udevadm trigger --subsystem-match=usb || true
+    udevadm control --reload-rules && udevadm trigger --subsystem-match=usb --subsystem-match=usbmisc || true
 
     install -d -m 0755 /opt/borne
     install -d -m 0755 /opt/borne/imprimante
@@ -203,8 +203,8 @@ cat <<FIN
     et la colonne « Imprimante » passer à « Prête » dans la minute.
 
   Avant la première vraie carte, sur la machine :
-    /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --etat
-    /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --calibrage
+    borne demon diag          ce que la machine voit de l'imprimante
+    borne demon calibrage     une carte à repères
   puis MESURER le cadre de la carte de calibrage : il doit être à 2 mm de chaque bord.
 
 FIN

@@ -185,16 +185,79 @@ cmd_journal() {
         2>/dev/null || journalctl "${suivre[@]}" -n 80 --no-pager -u borne-imprimante
 }
 
+PY_DEMON="/opt/borne/venv/bin/python"
+SCRIPT_DEMON="/opt/borne/imprimante/borne_imprimante.py"
+
+# Un geste à la main sur l'imprimante (test, calibrage, déblocage) se fait DÉMON ARRÊTÉ : il ouvre
+# l'USB chaque minute pour lire son état, et deux programmes sur la même imprimante, c'est une
+# « connexion refusée » au hasard — le pire des symptômes, celui qui ne se reproduit pas. Le geste
+# se joue sous l'identité du démon : ce qui marche ici marchera pour lui, droits USB compris.
+geste_imprimante() {
+    local option="$1" etait_actif=0 code=0
+    systemctl is-active --quiet borne-imprimante 2>/dev/null && etait_actif=1
+    if [[ $etait_actif -eq 1 ]]; then
+        systemctl stop borne-imprimante
+        gris "Démon suspendu le temps du geste."
+    fi
+    sudo -u borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$option" || code=$?
+    if [[ $etait_actif -eq 1 ]]; then
+        systemctl start borne-imprimante
+        gris "Démon relancé."
+    fi
+    return $code
+}
+
+# Tout ce qu'il faut savoir quand « rien ne marche », en une commande, à lire ou à photographier.
+cmd_diag() {
+    gras "USB : ce que le noyau voit"
+    if lsusb 2>/dev/null | grep -i '09a9' ; then :; else rouge "aucun appareil Evolis (09a9) sur l'USB — câble, alimentation, interrupteur"; fi
+
+    gras "Nœuds de périphérique"
+    local vu=0
+    for n in /dev/usb/lp*; do [[ -e "$n" ]] && { ls -l "$n"; vu=1; }; done
+    [[ $vu -eq 1 ]] || gris "pas de /dev/usb/lp* (l'imprimante est alors vue en USB brut, c'est normal aussi)"
+    local bus
+    bus="$(lsusb 2>/dev/null | awk '/09a9/ {gsub(":","",$4); print "/dev/bus/usb/"$2"/"$4; exit}')"
+    [[ -n "$bus" && -e "$bus" ]] && ls -l "$bus"
+    gris "attendu : groupe « borne-imprimante », droits crw-rw----"
+
+    gras "Derniers messages du noyau sur l'USB"
+    dmesg 2>/dev/null | grep -iE 'usb|evolis|usblp' | tail -8 || gris "(dmesg illisible)"
+
+    gras "Le SDK Evolis, sous l'identité du démon"
+    sudo -u borne-imprimante "$PY_DEMON" - <<'SONDE' || rouge "le SDK ne se charge pas — « borne maj » réinstalle l'environnement"
+import evolis
+appareils = list(evolis.Evolis.get_devices())
+print(f"  SDK chargé — {len(appareils)} imprimante(s) vue(s)")
+for d in appareils:
+    print(f"  · {d.name}  modèle={evolis.Evolis.get_model_name(d.model)}  en ligne={d.isOnline}")
+if not appareils:
+    print("  ⚠ aucune : droits USB (règle udev) ou imprimante éteinte")
+SONDE
+
+    gras "Ce que l'imprimante dit d'elle-même"
+    geste_imprimante --etat || true
+
+    gras "Outils de rendu"
+    command -v pdftoppm >/dev/null && vert "pdftoppm présent (cartes)" || rouge "pdftoppm ABSENT — apt install poppler-utils"
+    command -v gs >/dev/null && vert "ghostscript présent (calibrage)" || rouge "ghostscript ABSENT — apt install ghostscript"
+
+    gras "Le démon"
+    systemctl is-active --quiet borne-imprimante && vert "actif" || rouge "arrêté"
+    journalctl -u borne-imprimante -n 6 --no-pager 2>/dev/null | sed 's/^/  /'
+}
+
 cmd_demon() {
     case "${1:-etat}" in
         stop)      systemctl stop borne-imprimante;    vert "Démon arrêté." ;;
         demarre)   systemctl start borne-imprimante;   vert "Démon démarré." ;;
         relance)   systemctl restart borne-imprimante; vert "Démon relancé." ;;
-        etat)      /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --etat ;;
-        test)      /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --test ;;
-        calibrage) /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --calibrage ;;
-        debloquer) /opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py --debloquer ;;
-        *) rouge "borne demon <stop|demarre|relance|etat|test|calibrage|debloquer>"; exit 1 ;;
+        etat)      geste_imprimante --etat ;;
+        diag)      cmd_diag ;;
+        test)      geste_imprimante --test ;;
+        calibrage) geste_imprimante --calibrage ;;
+        debloquer) geste_imprimante --debloquer ;;
+        *) rouge "borne demon <stop|demarre|relance|etat|diag|test|calibrage|debloquer>"; exit 1 ;;
     esac
 }
 
@@ -264,7 +327,8 @@ borne — exploitation de la machine du hall
   borne domaine <url>         change l'adresse dans les deux fichiers
 
   borne journal [-f]          les traces des deux services
-  borne demon <...>           stop | demarre | relance | etat | test | calibrage | debloquer
+  borne demon <...>           stop | demarre | relance | etat | diag | test | calibrage | debloquer
+                              (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
   borne maj                   git pull puis réinstallation
 

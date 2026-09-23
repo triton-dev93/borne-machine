@@ -4,3 +4,8 @@
 # 0x09a9 = Evolis. Le modèle exact se relève au `lsusb` à réception ; la règle couvre le
 # constructeur entier, ce qui évite d'avoir à la retoucher si l'imprimante est remplacée.
 SUBSYSTEM=="usb", ATTRS{idVendor}=="09a9", MODE="0660", GROUP="borne-imprimante"
+
+# Selon le noyau, l'imprimante est AUSSI vue comme une imprimante USB classique (`/dev/usb/lp0`,
+# pilote usblp). Ce nœud-là appartient à un autre sous-système : sans cette seconde ligne, il
+# resterait à root, et le SDK, s'il passe par lui, se verrait refuser l'accès en silence.
+SUBSYSTEM=="usbmisc", KERNEL=="lp*", ATTRS{idVendor}=="09a9", MODE="0660", GROUP="borne-imprimante"
