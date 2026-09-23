@@ -182,6 +182,9 @@ class Evolis:
         "DEF_HOPPER_FULL": "bourrage",
         "INF_UNKNOWN_RIBBON": "ruban_inconnu",
         "ERR_BAD_RIBBON": "ruban_inconnu",
+        # Vu le jour J : ruban d'une autre ZONE que l'imprimante, ou d'une référence qu'elle ne prend
+        # pas. Elle refuse alors d'imprimer, même la carte de test du constructeur.
+        "DEF_UNSUPPORTED_RIBBON": "ruban_inconnu",
         "INF_CLEANING_REQUIRED": "nettoyage",
         "INF_RIBBON_LOW": "ruban_bas",
         "INF_FEEDER_NEAR_EMPTY": "chargeur_presque_vide",
@@ -205,7 +208,7 @@ class Evolis:
 
         if IMPRIMANTE:
             co = self.evolis.Connection(IMPRIMANTE, direct)
-            if not co.is_open():
+            if not co.get_context() is not None:
                 raise ImpressionImpossible("hors_ligne", f"{IMPRIMANTE} ne répond pas")
             return IMPRIMANTE, co
 
@@ -214,14 +217,14 @@ class Evolis:
             # Une borne a une imprimante. S'il y en avait plusieurs, la première en ligne fait l'affaire.
             appareil = next((d for d in appareils if d.isOnline), appareils[0])
             co = self.evolis.Connection(appareil)
-            if not co.is_open():
+            if not co.get_context() is not None:
                 raise ImpressionImpossible("hors_ligne", f"connexion refusée par {appareil.name}")
             return self.evolis.Evolis.get_model_name(appareil.model), co
 
         # Aucune file CUPS : on va la chercher sur l'USB, directement.
         for adresse in candidats_directs():
             co = self.evolis.Connection(adresse, direct)
-            if co.is_open():
+            if co.get_context() is not None:
                 return adresse, co
         raise ImpressionImpossible("hors_ligne", "aucune imprimante Evolis joignable (ni CUPS, ni USB direct)")
 
@@ -324,7 +327,31 @@ class Evolis:
     def carte_de_test(self) -> bool:
         _, co = self._ouvrir()
         try:
-            return self.evolis.PrintSession.print_test_card(co)
+            # ⚠ Type 1 = « Stt », RECTO seul. Le type 0 par défaut est recto-verso : la Zenius 2 est
+            # simplex et n'a rien à en faire.
+            ok = self.evolis.PrintSession.print_test_card(co, 1)
+            etat = co.get_state()
+            print(f"carte de test : {'lancée' if ok else 'REFUSÉE'} ({co.get_last_error().name}) — état {etat.major.name}/{etat.minor.name}")
+            return ok
+        finally:
+            co.close()
+
+    def fiche(self) -> None:
+        """Tout ce que l'imprimante et son ruban disent d'eux-mêmes — pour un ruban refusé surtout."""
+        libelle, co = self._ouvrir()
+        try:
+            info, etat, ruban = co.get_info(), co.get_state(), co.get_ribbon_info()
+            print(f"adresse     : {libelle}")
+            if info is not None:
+                print(f"imprimante  : {info.modelName}  n° {info.serialNumber}  micrologiciel {info.fwVersion}  zone « {info.zone} »")
+            print(f"état brut   : {etat.major.name}/{etat.minor.name}")
+            if ruban is None:
+                print(f"ruban       : illisible ({co.get_last_error().name}) — pas de ruban, ou puce non lue")
+            else:
+                print(f"ruban       : {ruban.description}  réf. {ruban.productCode}  type {ruban.type.name}  zone « {ruban.zone} »")
+                print(f"              {ruban.remaining}/{ruban.capacity} impressions restantes")
+                if info is not None and ruban.zone and info.zone and ruban.zone != info.zone:
+                    print("  ⚠ ZONES DIFFÉRENTES : ce ruban n'est pas vendu pour cette imprimante — à échanger chez le revendeur.")
         finally:
             co.close()
 
@@ -609,6 +636,12 @@ def main() -> int:
         sys.exit("le paquet `evolis_sdk` n'est pas installé (ou poser EVOLIS_FACTICE=…)")
 
     if options.etat:
+        if hasattr(appareil, "fiche"):
+            try:
+                appareil.fiche()
+            except ImpressionImpossible as panne:
+                print(f"imprimante  : injoignable ({panne})")
+            print()
         etat = appareil.etat()
         print(f"état    : {etat.etat}")
         print(f"modèle  : {etat.modele or '—'}")
@@ -616,15 +649,21 @@ def main() -> int:
         print(f"ruban   : {etat.ruban_restant}/{etat.ruban_capacite} ({etat.ruban_type or '—'})")
         return 0
 
-    if options.test:
-        return 0 if appareil.carte_de_test() else 1
+    # Les gestes à la main parlent en phrases : une trace Python devant un exploitant ne dit rien.
+    try:
+        if options.test:
+            return 0 if appareil.carte_de_test() else 1
 
-    if options.debloquer:
-        appareil.debloquer()
-        return 0
+        if options.debloquer:
+            appareil.debloquer()
+            print("erreur mécanique effacée, carte éjectée")
+            return 0
 
-    if options.calibrage:
-        return calibrage(appareil)
+        if options.calibrage:
+            return calibrage(appareil)
+    except ImpressionImpossible as panne:
+        print(f"imprimante : {panne.motif} — {panne}")
+        return 1
 
     url, jeton = config()
     demon = Demon(Serveur(url, jeton), appareil)
@@ -659,7 +698,7 @@ def sonder() -> int:
     for adresse in essais:
         for mode in (evolis.OpenMode.DIRECT, evolis.OpenMode.AUTO):
             co = evolis.Connection(adresse, mode)
-            ouverte = co.is_open()
+            ouverte = co.get_context() is not None
             detail = ""
             if ouverte:
                 info = co.get_info()
