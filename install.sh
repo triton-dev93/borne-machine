@@ -6,14 +6,20 @@
 #
 # Ce script n'installe AUCUNE application : la borne est une page servie par le site. Il prépare
 # une machine à l'afficher toute seule, indéfiniment, sans que personne n'y touche.
-set -euo pipefail
+set -Eeuo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "À lancer avec sudo." >&2; exit 1; }
 
 ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UTILISATEUR="${BORNE_USER:-borne}"
 
-dire() { printf '\n\033[1;33m▸ %s\033[0m\n' "$*"; }
+dire() { ETAPE="$*"; printf '\n\033[1;33m▸ %s\033[0m\n' "$*"; }
+
+# ⚠ `set -e` arrête le script à la première commande qui échoue — et sans ce piège, en SILENCE :
+# un SDK qui ne s'installe pas laissait croire à une installation finie, et l'imprimante restait
+# « pas installée » sans que personne sache pourquoi. On dit OÙ, et quoi.
+ETAPE="préparation"
+trap 'code=$?; printf "\n\033[1;31m✗ ÉCHEC pendant « %s » (ligne %s) : %s\033[0m\n  Rien n est perdu : corriger, puis relancer « borne maj ».\n" "$ETAPE" "$LINENO" "$BASH_COMMAND" >&2; exit $code' ERR
 
 # ── Ce qu'on nous demande ────────────────────────────────────────────────────
 DOMAINE="${BORNE_DOMAINE:-}"
@@ -156,6 +162,14 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
 
     id -u borne-imprimante >/dev/null 2>&1 || adduser --system --group --no-create-home borne-imprimante
 
+    # Le jeton D'ABORD : si une étape suivante échoue (le SDK, le réseau), il est gardé, et
+    # « borne maj » ne le redemande pas — il reprend là où ça a cassé.
+    install -d -m 0755 /etc/borne
+    printf 'BORNE_URL=https://%s\nBORNE_JETON_IMPRESSION=%s\n' "$DOMAINE" "$JETON_IMPRESSION" > /etc/borne/imprimante.env
+    chown root:borne-imprimante /etc/borne/imprimante.env
+    chmod 0640 /etc/borne/imprimante.env
+    echo "  jeton d'impression enregistré"
+
     # ⚠ Sans cette règle udev, seul root voit l'imprimante USB : le démon échouerait à l'ouvrir
     # sans rien dire de clair. Le modèle exact se relève au `lsusb` ; la règle couvre le constructeur.
     install -m 0644 "$ICI/imprimante/99-evolis.rules" /etc/udev/rules.d/99-evolis.rules
@@ -166,14 +180,12 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     install -m 0755 "$ICI/imprimante/borne_imprimante.py" /opt/borne/imprimante/borne_imprimante.py
     install -m 0644 "$ICI/imprimante/requirements.txt" /opt/borne/imprimante/requirements.txt
 
-    [[ -d /opt/borne/venv ]] || python3 -m venv /opt/borne/venv
+    ETAPE="environnement Python et SDK Evolis"
+    [[ -x /opt/borne/venv/bin/python ]] || python3 -m venv /opt/borne/venv
     /opt/borne/venv/bin/pip install -q --upgrade pip
     /opt/borne/venv/bin/pip install -q -r /opt/borne/imprimante/requirements.txt
-
-    install -d -m 0755 /etc/borne
-    printf 'BORNE_URL=https://%s\nBORNE_JETON_IMPRESSION=%s\n' "$DOMAINE" "$JETON_IMPRESSION" > /etc/borne/imprimante.env
-    chown root:borne-imprimante /etc/borne/imprimante.env
-    chmod 0640 /etc/borne/imprimante.env
+    /opt/borne/venv/bin/python -c 'import evolis' && echo "  SDK Evolis installé"
+    ETAPE="service du démon"
 
     install -m 0644 "$ICI/systemd/borne-imprimante.service" /etc/systemd/system/borne-imprimante.service
     systemctl daemon-reload
