@@ -175,10 +175,20 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     install -m 0644 "$ICI/imprimante/99-evolis.rules" /etc/udev/rules.d/99-evolis.rules
     udevadm control --reload-rules && udevadm trigger --subsystem-match=usb --subsystem-match=usbmisc || true
 
+    # ⚠ Le dépôt est d'ordinaire cloné DANS /opt/borne : la source et la destination sont alors le
+    # même fichier, et `install` refuse de copier un fichier sur lui-même — c'est ce qui arrêtait
+    # l'installation de l'imprimante sur la vraie borne. Même fichier : on règle les droits, point.
+    poser() {  # poser <mode> <source> <destination>
+        if [[ "$(readlink -f "$2")" == "$(readlink -f "$3" 2>/dev/null || echo "$3")" ]]; then
+            chmod "$1" "$3"
+        else
+            install -m "$1" "$2" "$3"
+        fi
+    }
     install -d -m 0755 /opt/borne
     install -d -m 0755 /opt/borne/imprimante
-    install -m 0755 "$ICI/imprimante/borne_imprimante.py" /opt/borne/imprimante/borne_imprimante.py
-    install -m 0644 "$ICI/imprimante/requirements.txt" /opt/borne/imprimante/requirements.txt
+    poser 0755 "$ICI/imprimante/borne_imprimante.py" /opt/borne/imprimante/borne_imprimante.py
+    poser 0644 "$ICI/imprimante/requirements.txt" /opt/borne/imprimante/requirements.txt
 
     ETAPE="environnement Python et SDK Evolis"
     [[ -x /opt/borne/venv/bin/python ]] || python3 -m venv /opt/borne/venv

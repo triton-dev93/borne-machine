@@ -5,3 +5,6 @@ env
 # Le démon est un programme Python : ses caches ne regardent personne.
 __pycache__/
 *.pyc
+
+# L environnement Python du démon vit dans le clone (/opt/borne/venv) : il n est pas au dépôt.
+venv/
