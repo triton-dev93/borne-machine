@@ -210,14 +210,18 @@ geste_imprimante() {
 # Tout ce qu'il faut savoir quand « rien ne marche », en une commande, à lire ou à photographier.
 cmd_diag() {
     gras "USB : ce que le noyau voit"
-    if lsusb 2>/dev/null | grep -i '09a9' ; then :; else rouge "aucun appareil Evolis (09a9) sur l'USB — câble, alimentation, interrupteur"; fi
+    if lsusb 2>/dev/null | grep -i '0f49' ; then :; else
+        rouge "aucun appareil Evolis (0f49) sur l'USB — câble, alimentation, interrupteur"
+        gris "tout ce que l'USB voit, pour comparer :"
+        lsusb 2>/dev/null | sed 's/^/    /'
+    fi
 
     gras "Nœuds de périphérique"
     local vu=0
     for n in /dev/usb/lp*; do [[ -e "$n" ]] && { ls -l "$n"; vu=1; }; done
     [[ $vu -eq 1 ]] || gris "pas de /dev/usb/lp* (l'imprimante est alors vue en USB brut, c'est normal aussi)"
     local bus
-    bus="$(lsusb 2>/dev/null | awk '/09a9/ {gsub(":","",$4); print "/dev/bus/usb/"$2"/"$4; exit}')"
+    bus="$(lsusb 2>/dev/null | awk '/0f49/ {gsub(":","",$4); print "/dev/bus/usb/"$2"/"$4; exit}')"
     [[ -n "$bus" && -e "$bus" ]] && ls -l "$bus"
     gris "attendu : groupe « borne-imprimante », droits crw-rw----"
 

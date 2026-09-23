@@ -1,11 +1,13 @@
 # L'imprimante à cartes est un périphérique USB : sans cette règle, seul root la voit, et le démon
 # — qui n'est pas root, et ne doit pas l'être — échouerait à l'ouvrir sans rien dire de clair.
 #
-# 0x09a9 = Evolis. Le modèle exact se relève au `lsusb` à réception ; la règle couvre le
-# constructeur entier, ce qui évite d'avoir à la retoucher si l'imprimante est remplacée.
-SUBSYSTEM=="usb", ATTRS{idVendor}=="09a9", MODE="0660", GROUP="borne-imprimante"
+# 0x0f49 = Evolis SA (base usb.ids : « 0f49 Evolis SA », « 0a00 Zenius »). ⚠ PAS 0x09a9, qui est
+# Smart Card Technologies : la première version de cette règle visait ce fabricant-là, ne
+# s'appliquait donc jamais, et le diagnostic cherchait un appareil qui ne pouvait pas exister.
+# La règle couvre le constructeur entier : elle survit à un remplacement d'imprimante.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0f49", MODE="0660", GROUP="borne-imprimante"
 
 # Selon le noyau, l'imprimante est AUSSI vue comme une imprimante USB classique (`/dev/usb/lp0`,
 # pilote usblp). Ce nœud-là appartient à un autre sous-système : sans cette seconde ligne, il
 # resterait à root, et le SDK, s'il passe par lui, se verrait refuser l'accès en silence.
-SUBSYSTEM=="usbmisc", KERNEL=="lp*", ATTRS{idVendor}=="09a9", MODE="0660", GROUP="borne-imprimante"
+SUBSYSTEM=="usbmisc", KERNEL=="lp*", ATTRS{idVendor}=="0f49", MODE="0660", GROUP="borne-imprimante"
