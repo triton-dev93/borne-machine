@@ -21,13 +21,38 @@ JETON="${BORNE_JETON:-}"
 TAILSCALE_CLE="${TAILSCALE_CLE:-}"
 JETON_IMPRESSION="${BORNE_JETON_IMPRESSION:-}"
 
-[[ -n "$DOMAINE" ]] || read -rp "Domaine de la borne (ex. borne.letriton.com) : " DOMAINE
-[[ -n "$JETON" ]]   || read -rsp "Jeton de la borne (affiché une seule fois dans l'admin) : " JETON && echo
-[[ -n "$TAILSCALE_CLE" ]] || read -rsp "Clé d'authentification Tailscale TAGUÉE (vide = ignorer) : " TAILSCALE_CLE && echo
+# Une saisie VISIBLE, puis ce qui a été reçu. La saisie masquée laissait taper à l'aveugle : on ne
+# savait pas si les touches arrivaient, un collage raté passait pour un « vide », et le démon
+# d'impression n'était jamais installé — sans que rien ne le dise. On installe la borne devant
+# elle, pas devant le public : voir le jeton le temps de le taper ne coûte rien.
+saisir() {
+    local invite="$1" valeur
+    read -rp "$invite" valeur
+    printf '%s' "$valeur" | tr -d '[:space:]'
+}
+recu() {  # recu <nom> <valeur> <longueur attendue ou vide>
+    if [[ -z "$2" ]]; then
+        printf '  → %s : rien saisi\n' "$1"
+    else
+        printf '  → %s reçu : %d caractères, empreinte %s\n' "$1" "${#2}" "$(printf '%s' "$2" | sha256sum | cut -c1-12)"
+        [[ -z "${3:-}" || ${#2} -eq $3 ]] || printf '  \033[33m⚠ %s attendus — copie tronquée ?\033[0m\n' "$3"
+    fi
+}
+
+[[ -n "$DOMAINE" ]] || DOMAINE="$(saisir "Domaine de la borne (ex. borne.letriton.com) : ")"
+[[ -n "$JETON" ]] || { JETON="$(saisir "Jeton d'ÉCRAN de la borne (affiché une seule fois dans l'admin) : ")"; recu "jeton d'écran" "$JETON" 48; }
+# Une machine déjà inscrite n'a pas à redonner sa clé : « borne maj » ne la redemande plus.
+if [[ -z "$TAILSCALE_CLE" ]] && ! tailscale status >/dev/null 2>&1; then
+    TAILSCALE_CLE="$(saisir "Clé d'authentification Tailscale TAGUÉE (Entrée = ignorer) : ")"
+    recu "clé Tailscale" "$TAILSCALE_CLE" ""
+fi
 # Le SECOND jeton, celui du démon d'impression. Deux secrets à portée disjointe plutôt que deux
 # copies d'un seul : celui-ci n'ouvre que la file d'impression, et il vit dans un autre fichier,
 # lisible d'un autre utilisateur.
-[[ -n "$JETON_IMPRESSION" ]] || read -rsp "Jeton d'IMPRESSION de la borne (vide = pas d'imprimante) : " JETON_IMPRESSION && echo
+if [[ -z "$JETON_IMPRESSION" ]]; then
+    JETON_IMPRESSION="$(saisir "Jeton d'IMPRESSION de la borne (Entrée = pas d'imprimante) : ")"
+    recu "jeton d'impression" "$JETON_IMPRESSION" 48
+fi
 
 # ── Paquets ──────────────────────────────────────────────────────────────────
 dire "Paquets"

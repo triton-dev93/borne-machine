@@ -86,9 +86,11 @@ sonder() {
 JETON_SAISI=''
 demander_jeton() {
     local invite="$1" saisi
-    read -rsp "$invite" saisi; echo
+    # Visible : taper à l'aveugle, on ne sait même pas si les touches arrivent.
+    read -rp "$invite" saisi
     saisi="$(printf '%s' "$saisi" | tr -d '[:space:]')"   # un copier-coller traîne souvent un saut de ligne
     [[ -n "$saisi" ]] || { rouge "Rien saisi, rien changé."; exit 1; }
+    gris "reçu : ${#saisi} caractères, empreinte $(empreinte "$saisi") (à comparer avec l'administration)"
     [[ ${#saisi} -eq 48 ]] || jaune "⚠ Ce jeton fait ${#saisi} caractères au lieu de 48 — copie tronquée ?"
     JETON_SAISI="$saisi"
 }
@@ -139,7 +141,7 @@ cmd_demarre() { uctl start borne;   vert "Kiosque démarré."; }
 cmd_relance() { uctl restart borne; vert "Kiosque relancé."; }
 
 cmd_jeton() {
-    demander_jeton 'Nouveau jeton d ÉCRAN (il ne s affiche pas) : '
+    demander_jeton 'Nouveau jeton d ÉCRAN : '
     ecrire "$ENV_ECRAN" BORNE_JETON "$JETON_SAISI"
     vert "Écrit dans $ENV_ECRAN."
     uctl restart borne 2>/dev/null || true
@@ -148,8 +150,18 @@ cmd_jeton() {
 }
 
 cmd_jeton_impression() {
-    [[ -f "$ENV_DEMON" ]] || { rouge "Pas d'imprimante configurée ici ($ENV_DEMON absent)."; exit 1; }
-    demander_jeton 'Nouveau jeton d IMPRESSION (il ne s affiche pas) : '
+    demander_jeton 'Jeton d IMPRESSION : '
+    # Pas encore d'imprimante sur cette machine : on l'installe, avec ce jeton. C'est le cas d'une
+    # borne installée avant l'arrivée de l'imprimante.
+    if [[ ! -f "$ENV_DEMON" ]]; then
+        gras "Le démon d'impression n'est pas installé : installation"
+        BORNE_DOMAINE="$(lire "$ENV_ECRAN" BORNE_URL | sed 's|^https\?://||')" \
+        BORNE_JETON="$(lire "$ENV_ECRAN" BORNE_JETON)" \
+        BORNE_JETON_IMPRESSION="$JETON_SAISI" \
+        TAILSCALE_CLE="" \
+            bash "$DEPOT/install.sh"
+        return
+    fi
     ecrire "$ENV_DEMON" BORNE_JETON_IMPRESSION "$JETON_SAISI"
     vert "Écrit dans $ENV_DEMON."
     systemctl restart borne-imprimante
@@ -227,6 +239,13 @@ cmd_diag() {
 
     gras "Derniers messages du noyau sur l'USB"
     dmesg 2>/dev/null | grep -iE 'usb|evolis|usblp' | tail -8 || gris "(dmesg illisible)"
+
+    if [[ ! -f "$ENV_DEMON" ]]; then
+        gras "Le démon d'impression"
+        rouge "PAS INSTALLÉ sur cette machine ($ENV_DEMON absent) — le jeton d'impression n'a jamais été donné."
+        jaune "→ « borne jeton-impression » : coller le jeton d'impression de l'admin, il installe tout."
+        return
+    fi
 
     gras "Le SDK Evolis, sous l'identité du démon"
     sudo -u borne-imprimante "$PY_DEMON" - <<'SONDE' || rouge "le SDK ne se charge pas — « borne maj » réinstalle l'environnement"
@@ -380,7 +399,7 @@ borne — exploitation de la machine du hall
   borne relance               l'un puis l'autre
 
   borne jeton                 change le jeton d'ÉCRAN, relance, et VÉRIFIE
-  borne jeton-impression      change celui du démon Evolis
+  borne jeton-impression      pose celui du démon Evolis (et l'installe s'il manque)
   borne domaine <url>         change l'adresse dans les deux fichiers
 
   borne journal [-f]          les traces des deux services
