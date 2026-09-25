@@ -732,6 +732,12 @@ class Serveur:
         if etat is not None:
             charge["etat"] = etat.charge()
         r = self.session.post(f"{self.base}/{identifiant}/resultat", json=charge, timeout=20)
+        if r.status_code == 422 and motif not in (None, "erreur"):
+            # Un serveur plus ancien que le démon ne connaît pas encore ce motif, et refuse tout
+            # l'accusé : le travail resterait « en cours » pour toujours. On accuse sans le nom.
+            journal.warning("motif « %s » inconnu du serveur : accusé en « erreur »", motif)
+            charge["motif"] = "erreur"
+            r = self.session.post(f"{self.base}/{identifiant}/resultat", json=charge, timeout=20)
         r.raise_for_status()
 
 
