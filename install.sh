@@ -162,6 +162,13 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
 
     id -u borne-imprimante >/dev/null 2>&1 || adduser --system --group --no-create-home borne-imprimante
 
+    # La bibliothèque Evolis veut /opt/evolis au groupe `_evolis`, et un $HOME pour sa configuration :
+    # sans eux, elle ne construisait pas l'image de face (« Missing front bitmap bundle »).
+    getent group _evolis >/dev/null || groupadd --system _evolis
+    usermod -aG _evolis borne-imprimante
+    install -d -m 2775 -o root -g _evolis /opt/evolis
+    install -d -m 0750 -o borne-imprimante -g borne-imprimante /var/lib/borne-imprimante
+
     # Le jeton D'ABORD : si une étape suivante échoue (le SDK, le réseau), il est gardé, et
     # « borne maj » ne le redemande pas — il reprend là où ça a cassé.
     install -d -m 0755 /etc/borne

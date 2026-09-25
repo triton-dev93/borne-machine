@@ -12,6 +12,13 @@ Group=borne-imprimante
 # Le jeton vit dans un fichier à part, lisible du seul service : il n'apparaît ni dans
 # `systemctl status`, ni dans le journal, ni dans la table des processus.
 EnvironmentFile=/etc/borne/imprimante.env
+# La bibliothèque Evolis range sa configuration sous $HOME et sous /opt/evolis : un utilisateur
+# système n'a ni l'un ni l'autre, et elle ne construisait plus l'image de face (25/09).
+Environment=HOME=/var/lib/borne-imprimante
+StateDirectory=borne-imprimante
+StateDirectoryMode=0750
+ReadWritePaths=-/opt/evolis
+SupplementaryGroups=_evolis
 ExecStart=/opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py
 Restart=always
 RestartSec=5

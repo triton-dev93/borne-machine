@@ -211,7 +211,8 @@ geste_imprimante() {
         systemctl stop borne-imprimante
         gris "Démon suspendu le temps du geste."
     fi
-    sudo -u borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$@" || code=$?
+    # Le même $HOME que le service : la bibliothèque Evolis y range sa configuration.
+    sudo -u borne-imprimante env HOME=/var/lib/borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$@" || code=$?
     if [[ $etait_actif -eq 1 ]]; then
         systemctl start borne-imprimante
         gris "Démon relancé."
@@ -261,7 +262,7 @@ cmd_diag() {
     fi
 
     gras "Le SDK Evolis, sous l'identité du démon"
-    sudo -u borne-imprimante "$PY_DEMON" - <<'SONDE' || rouge "le SDK ne se charge pas — « borne maj » réinstalle l'environnement"
+    sudo -u borne-imprimante env HOME=/var/lib/borne-imprimante "$PY_DEMON" - <<'SONDE' || rouge "le SDK ne se charge pas — « borne maj » réinstalle l'environnement"
 import evolis
 appareils = list(evolis.Evolis.get_devices())
 print(f"  SDK chargé — {len(appareils)} imprimante(s) vue(s)")

@@ -349,16 +349,27 @@ class Evolis:
             except OSError:
                 pass
 
+            # ⚠ L'image de FACE s'envoie en couleurs ordinaires : la bibliothèque la passe elle-même
+            # au noir pour un ruban monochrome. En 1 bit — le format du panneau K — elle ne
+            # construisait pas l'image de face (« Missing front bitmap bundle », 25/09).
+            envoi = png
+            if PANNEAU != "noir":
+                from PIL import Image
+
+                envoi = png.with_name(png.stem + "-rvb.png")
+                with Image.open(png) as image:
+                    image.convert("RGB").save(envoi, "PNG")
+
             poser = session.set_black if PANNEAU == "noir" else session.set_image
-            if not poser(self.evolis.CardFace.FRONT, str(png)):
+            if not poser(self.evolis.CardFace.FRONT, str(envoi)):
                 raise ImpressionImpossible(
-                    "erreur", f"image refusée par le pilote ({session.get_last_error().name})" + self._diagnostic(session, png),
+                    "erreur", f"image refusée par le pilote ({session.get_last_error().name})" + self._diagnostic(session, envoi),
                 )
 
             code = session.print()
             if code != self.evolis.ReturnCode.OK:
                 raise ImpressionImpossible(
-                    self._motif_du_code(code, co), f"impression refusée : {code.name}" + self._diagnostic(session, png),
+                    self._motif_du_code(code, co), f"impression refusée : {code.name}" + self._diagnostic(session, envoi),
                 )
         finally:
             co.close()
