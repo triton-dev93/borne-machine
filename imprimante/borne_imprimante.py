@@ -608,7 +608,7 @@ class EvolisFactice:
 
 # ── Le PDF devient une image ────────────────────────────────────────────────────────────────────
 
-def rasteriser(pdf: bytes, travail: Path) -> Path:
+def rasteriser(pdf: bytes, travail: Path, bordure: bool = True) -> Path:
     """PDF 54 × 86 → PNG 1 bit prêt pour le panneau noir.
 
     On rasterise nous-mêmes plutôt que de laisser un pilote décider : c'est ce qui garantit qu'un QR
@@ -648,7 +648,9 @@ def rasteriser(pdf: bytes, travail: Path) -> Path:
                 f"attendu {CARTE_PX[0]} × {CARTE_PX[1]} à {DPI} dpi",
             )
 
-        image = _fond_perdu(_marge(image))
+        # Le cadre blanc est pour les CARTES (l'aplat noir du recto). Le verso sortait très bien
+        # sans : on n'y touche pas (Bastien, 25/09).
+        image = _fond_perdu(_marge(image) if bordure else image)
         pret = travail / "carte-k.png"
         image.save(pret, "PNG", bits=1, optimize=True)
 
@@ -833,7 +835,7 @@ class Demon:
         with tempfile.TemporaryDirectory(dir=str(self.travaux)) as dossier:
             chemin = Path(dossier)
             try:
-                png = rasteriser(base64.b64decode(travail["pdf"]), chemin)
+                png = rasteriser(base64.b64decode(travail["pdf"]), chemin, bordure=travail.get("type") != "verso")
             except ImpressionImpossible as panne:
                 journal.error("travail %s : %s", identifiant, panne)
                 self.serveur.resultat(identifiant, "echec", deja, panne.motif, self.imprimante.etat())
