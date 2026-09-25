@@ -202,6 +202,9 @@ class Evolis:
         # Vu le jour J : ruban d'une autre ZONE que l'imprimante, ou d'une référence qu'elle ne prend
         # pas. Elle refuse alors d'imprimer, même la carte de test du constructeur.
         "DEF_UNSUPPORTED_RIBBON": "ruban_inconnu",
+        # Vu le 25/09 : ruban mal engagé, détendu ou déchiré. L'admin disait « erreur » sans motif.
+        "ERR_RIBBON_ERROR": "ruban_erreur",
+        "DEF_RIBBON_ERROR": "ruban_erreur",
         "INF_CLEANING_REQUIRED": "nettoyage",
         "INF_RIBBON_LOW": "ruban_bas",
         "INF_FEEDER_NEAR_EMPTY": "chargeur_presque_vide",
@@ -487,12 +490,12 @@ class Evolis:
             try:
                 n = co.get_cleaning_info()
                 if n is not None:
-                    reste = n.warningThreshold - n.cardCount if n.warningThreshold else None
-                    print(f"nettoyage   : {n.cardCount} cartes depuis le dernier (sur {n.totalCardCount} en tout) · "
-                          f"à nettoyer vers {n.warningThreshold}{f', encore ~{reste}' if reste is not None else ''} · "
-                          f"garantie de la tête perdue à {n.warrantyLostThreshold} sans nettoyage · "
-                          f"tête {'sous garantie' if n.printHeadUnderWarranty else 'HORS garantie'} · "
-                          f"{n.regularCleaningCount} nettoyage(s) simple(s), {n.advancedCleaningCount} avancé(s)")
+                    # Valeurs BRUTES : le SDK ne documente pas ces champs, on ne les interprète pas.
+                    print(f"nettoyage   : total={n.totalCardCount} compteur={n.cardCount} "
+                          f"avant_alerte={n.cardCountBeforeWarning} avant_perte_garantie={n.cardCountBeforeWarrantyLost} "
+                          f"au_dernier={n.cardCountAtLastCleaning} seuil_alerte={n.warningThreshold} "
+                          f"seuil_garantie={n.warrantyLostThreshold} simples={n.regularCleaningCount} "
+                          f"avances={n.advancedCleaningCount} tete_sous_garantie={n.printHeadUnderWarranty}")
             except Exception:  # noqa: BLE001 — une fiche ne casse pas sur un détail
                 pass
             if ruban is None:
