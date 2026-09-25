@@ -221,6 +221,58 @@ geste_imprimante() {
 }
 
 # Tout ce qu'il faut savoir quand « rien ne marche », en une commande, à lire ou à photographier.
+# ── L'assistance à distance : que le poste de Bastien puisse regarder la borne lui-même ─────────
+# Sans elle, chaque diagnostic passait par une photo de l'écran. Tout est fermé par défaut, et tout
+# se referme d'une commande. L'accès n'existe QUE sur le réseau Tailscale (l'adresse 100.x), par
+# clé — jamais par mot de passe —, et n'élève que la seule commande `borne`.
+SSHD_ASSISTANCE="/etc/ssh/sshd_config.d/borne-assistance.conf"
+SUDO_ASSISTANCE="/etc/sudoers.d/borne-assistance"
+
+cmd_assistance() {
+    if [[ "${1:-}" == "off" ]]; then
+        rm -f "$SSHD_ASSISTANCE" "$SUDO_ASSISTANCE" "$MAISON/.ssh/authorized_keys.borne-assistance"
+        [[ -f "$MAISON/.ssh/authorized_keys" ]] && sed -i '/# borne-assistance$/d' "$MAISON/.ssh/authorized_keys"
+        systemctl disable --now ssh >/dev/null 2>&1 || true
+        vert "Assistance fermée : plus de SSH, plus de clé autorisée."
+        return
+    fi
+
+    gras "Tailscale"
+    command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
+    if ! tailscale ip -4 >/dev/null 2>&1; then
+        jaune "Connexion au réseau Tailscale : ouvre le lien ci-dessous (sur ton téléphone) avec le compte GitHub beedibeedi."
+        tailscale up --hostname="borne-$(hostname -s | tr '[:upper:]' '[:lower:]' | cut -c1-40)"
+    fi
+    local ip
+    ip="$(tailscale ip -4 2>/dev/null | head -1)"
+    [[ -n "$ip" ]] || { rouge "Tailscale ne donne pas d'adresse : relance « borne assistance »."; exit 1; }
+    vert "Sur le réseau : $ip"
+
+    gras "SSH, sur Tailscale seulement, par clé"
+    command -v sshd >/dev/null || { apt-get update -qq && apt-get install -y -qq openssh-server >/dev/null; }
+    install -d -m 0700 -o "$UTILISATEUR" -g "$UTILISATEUR" "$MAISON/.ssh"
+    touch "$MAISON/.ssh/authorized_keys"
+    sed -i '/# borne-assistance$/d' "$MAISON/.ssh/authorized_keys"
+    printf '%s # borne-assistance\n' "$(cat "$DEPOT/assistance/poste-bastien.pub")" >> "$MAISON/.ssh/authorized_keys"
+    chown "$UTILISATEUR:$UTILISATEUR" "$MAISON/.ssh/authorized_keys"; chmod 0600 "$MAISON/.ssh/authorized_keys"
+    cat > "$SSHD_ASSISTANCE" <<SSHD
+# Posé par « borne assistance », retiré par « borne assistance off ».
+# Par ORIGINE (le réseau Tailscale, 100.64.0.0/10) plutôt que par adresse d'écoute : au démarrage,
+# SSH peut partir avant que Tailscale ait son adresse, et n'écouterait alors plus rien.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers $UTILISATEUR@100.64.0.0/10
+SSHD
+    printf '%s ALL=(root) NOPASSWD: /usr/local/bin/borne\n' "$UTILISATEUR" > "$SUDO_ASSISTANCE"
+    chmod 0440 "$SUDO_ASSISTANCE"
+    visudo -cf "$SUDO_ASSISTANCE" >/dev/null || { rm -f "$SUDO_ASSISTANCE"; rouge "règle sudo refusée"; exit 1; }
+    systemctl enable ssh >/dev/null 2>&1 || true
+    systemctl restart ssh
+    vert "Assistance ouverte : ssh $UTILISATEUR@$ip, par clé seulement."
+    gris "« borne assistance off » referme tout."
+}
+
 # Fixer une sortie pour de bon : elle s'écrit à côté du jeton, et le démon repart avec.
 cmd_sortie() {
     local clef="$1" nom="${2:-}"
@@ -440,6 +492,7 @@ borne — exploitation de la machine du hall
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
   borne maj                   git pull puis réinstallation
+  borne assistance [off]      ouvre (ou referme) l'accès à distance, sur Tailscale, par clé
   borne cle-github [verifier] l'accès au dépôt par clé de déploiement (plus de mot de passe)
 
 Les jetons ne s'affichent jamais : « borne etat » en donne l'empreinte, qui se
@@ -463,6 +516,7 @@ case "${1:-aide}" in
     sortie-rejet)       shift || true; cmd_sortie EVOLIS_SORTIE_REJET "${1:-}" ;;
     chrome)             shift || true; cmd_chrome "${1:-}" ;;
     maj)                cmd_maj ;;
+    assistance)         shift || true; cmd_assistance "${1:-}" ;;
     cle-github)         shift || true; if [[ "${1:-}" == "verifier" ]]; then cmd_cle_github_verifier; else cmd_cle_github; fi ;;
     aide|-h|--help)     cmd_aide ;;
     *) rouge "Commande inconnue : $1"; echo; cmd_aide; exit 1 ;;
