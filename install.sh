@@ -166,7 +166,11 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     # sans eux, elle ne construisait pas l'image de face (« Missing front bitmap bundle »).
     getent group _evolis >/dev/null || groupadd --system _evolis
     usermod -aG _evolis borne-imprimante
-    install -d -m 2775 -o root -g _evolis /opt/evolis
+    # Toute l'arborescence, d'avance : la bibliothèque range la configuration de chaque imprimante
+    # sous /opt/evolis/etc/printers/, et n'avait pas le droit de la créer (« permission denied »).
+    # Le bit setgid (2775) fait hériter le groupe `_evolis` à tout ce qu'elle y créera ensuite.
+    install -d -m 2775 -o root -g _evolis /opt/evolis /opt/evolis/etc /opt/evolis/etc/printers
+    chgrp -R _evolis /opt/evolis && chmod -R g+rwX /opt/evolis
     install -d -m 0750 -o borne-imprimante -g borne-imprimante /var/lib/borne-imprimante
 
     # Le jeton D'ABORD : si une étape suivante échoue (le SDK, le réseau), il est gardé, et
