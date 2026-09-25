@@ -297,7 +297,9 @@ cmd_reglage() {
         contraste) clef=EVOLIS_CONTRASTE; bornes="1 20" ;;
         vitesse)   clef=EVOLIS_VITESSE;   bornes="1 10" ;;
         marge)     clef=EVOLIS_MARGE_MM;  bornes="" ;;
-        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm> [valeur|usine]"
+        arrondi)   clef=EVOLIS_ARRONDI_MM; bornes="" ;;
+        decalage)  clef=EVOLIS_DECALAGE_MM; bornes="signe" ;;
+        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm|arrondi mm|decalage ±mm> [valeur|usine]"
            gris "sans valeur : ce qui est posé ; « usine » : on rend la main à l'imprimante"; exit 1 ;;
     esac
     if [[ -z "$valeur" ]]; then
@@ -307,11 +309,13 @@ cmd_reglage() {
         local tmp; tmp="$(mktemp)"; grep -vE "^$clef=" "$ENV_DEMON" > "$tmp" || true
         cat "$tmp" > "$ENV_DEMON"; rm -f "$tmp"
     else
-        if [[ -n "$bornes" ]]; then
+        if [[ "$bornes" == "signe" ]]; then
+            [[ "$valeur" =~ ^-?[0-9]+([.,][0-9]+)?$ ]] || { rouge "decalage : des mm, négatif pour avancer (ex. 1 ou -0.5)"; exit 1; }
+        elif [[ -n "$bornes" ]]; then
             read -r bas haut <<<"$bornes"
             [[ "$valeur" =~ ^[0-9]+$ ]] && (( valeur >= bas && valeur <= haut )) || { rouge "$quoi : de $bas à $haut"; exit 1; }
         else
-            [[ "$valeur" =~ ^[0-9]+([.,][0-9]+)?$ ]] || { rouge "marge : un nombre de mm (0 à 4)"; exit 1; }
+            [[ "$valeur" =~ ^[0-9]+([.,][0-9]+)?$ ]] || { rouge "$quoi : un nombre de mm"; exit 1; }
         fi
         ecrire "$ENV_DEMON" "$clef" "$valeur"
     fi
@@ -537,6 +541,7 @@ borne — exploitation de la machine du hall
   borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
   borne sortie-rejet <nom>    fixe celle des cartes ratées
   borne reglage <quoi> [v]    chauffe et marge du noir : contraste 1-20 | vitesse 1-10 | marge mm
+                              | arrondi mm | decalage ±mm (recule l'image vers le côté qui sort en dernier)
                               (« usine » rend la main ; essayer avec « borne demon essai-noir »)
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder

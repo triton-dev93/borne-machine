@@ -88,8 +88,20 @@ PANNEAU = os.environ.get("EVOLIS_PANNEAU", "image").strip().lower()
 #: ruban à la carte : il ne s'en décolle plus à la sortie de la tête, la carte se coince et le ruban
 #: se déchire — vu le 25/09 sur les pass à aplat noir, deux fois de suite. Le dessin fait 86 mm
 #: pour une carte de 85,6 : sans marge, le noir DÉBORDE des petits côtés, ceux par où la carte entre
-#: et sort. 1 mm suffit d'ordinaire ; « 0 » rend l'aplat plein bord (à ses risques).
-MARGE_MM = os.environ.get("EVOLIS_MARGE_MM", "1").strip()
+#: et sort. « 0 » rend l'aplat plein bord (à ses risques). 2 mm depuis le 25/09 : 1 mm tenait le
+#: ruban, mais se voyait à peine, et disparaissait côté entrée (voir {@see DECALAGE_MM}).
+MARGE_MM = os.environ.get("EVOLIS_MARGE_MM", "2").strip()
+
+#: Le rayon des coins du noir, en mm. Vide = SUIVRE la carte : un coin ISO fait 3,18 mm, le noir
+#: tourne donc à 3,18 − marge, et le blanc garde la même largeur partout, coins compris.
+ARRONDI_MM = os.environ.get("EVOLIS_ARRONDI_MM", "").strip()
+RAYON_CARTE_MM = 3.18
+
+#: De combien l'imprimante pose l'image en avance sur la carte, en mm, dans le sens où elle sort.
+#: Vu le 25/09 : le côté qui sort EN PREMIER (le haut du dessin) n'avait plus sa marge de 1 mm, la
+#: tête commençant avant la carte. Positif = l'image recule vers le côté qui sort en dernier.
+#: Se mesure sur la carte de calibrage (le cadre doit tomber à 2 mm des deux petits côtés).
+DECALAGE_MM = os.environ.get("EVOLIS_DECALAGE_MM", "").strip()
 
 #: La chauffe du noir : `FMonochromeContrast` (1 à 20, 10 en usine) et `IGMonochromeSpeed` (1 à 10,
 #: 10 en usine). Trop chaud, le ruban fond sur la carte. Vide = le réglage de l'imprimante.
@@ -641,25 +653,47 @@ def _proche(taille: tuple[int, int], attendu: tuple[int, int]) -> bool:
     return all(abs(a - b) <= TOLERANCE_PX for a, b in zip(taille, attendu))
 
 
-def _marge(image):
-    """Blanchit un cadre de {@see MARGE_MM} autour de la carte : le noir ne touche plus le bord."""
-    from PIL import ImageDraw
-
+def _mm(valeur: str, nom: str, defaut: float) -> float:
     try:
-        mm = float(MARGE_MM.replace(",", ".")) if MARGE_MM else 0.0
+        return float(valeur.replace(",", ".")) if valeur else defaut
     except ValueError:
-        journal.warning("EVOLIS_MARGE_MM=%r illisible : 1 mm", MARGE_MM)
-        mm = 1.0
-    px = round(max(0.0, min(mm, 4.0)) * DPI / 25.4)
+        journal.warning("%s=%r illisible : %s mm", nom, valeur, defaut)
+        return defaut
+
+
+def _marge(image):
+    """Blanchit un cadre de {@see MARGE_MM} autour de la carte, aux coins arrondis comme elle.
+
+    Le noir ne touche plus le bord — le ruban ne colle plus — et le cadre se lit comme un choix.
+    """
+    from PIL import Image, ImageDraw
+
+    mm = max(0.0, min(_mm(MARGE_MM, "EVOLIS_MARGE_MM", 2.0), 5.0))
+    px = round(mm * DPI / 25.4)
     if px == 0:
         return image
 
-    image = image.copy()
-    trait = ImageDraw.Draw(image)
+    rayon_mm = _mm(ARRONDI_MM, "EVOLIS_ARRONDI_MM", max(RAYON_CARTE_MM - mm, 0.5))
+    rayon = round(max(0.0, rayon_mm) * DPI / 25.4)
+
     l, h = image.size
-    for boite in ((0, 0, l - 1, px - 1), (0, h - px, l - 1, h - 1), (0, 0, px - 1, h - 1), (l - px, 0, l - 1, h - 1)):
-        trait.rectangle(boite, fill=1)  # 1 = blanc en mode « 1 »
-    return image
+    garde = Image.new("1", image.size, 0)
+    ImageDraw.Draw(garde).rounded_rectangle((px, px, l - 1 - px, h - 1 - px), radius=rayon, fill=1)
+    blanc = Image.new("1", image.size, 1)  # 1 = blanc en mode « 1 »
+    return Image.composite(image, blanc, garde)
+
+
+def _decaler(image):
+    """Recule l'image de {@see DECALAGE_MM} dans le sens de sortie, en blanc derrière."""
+    from PIL import Image
+
+    dy = round(_mm(DECALAGE_MM, "EVOLIS_DECALAGE_MM", 0.0) * DPI / 25.4)
+    if dy == 0:
+        return image
+    dy = max(-100, min(dy, 100))
+    decale = Image.new("1", image.size, 1)
+    decale.paste(image, (0, dy))
+    return decale
 
 
 def carte_noire() -> Path:
@@ -680,23 +714,24 @@ def _fond_perdu(image):
     """
     from PIL import Image
 
+    # Le décalage vaut pour TOUT ce qui sort, calibrage compris : c'est lui qui le vérifie.
     if not BITMAP:
-        return image
+        return _decaler(image)
 
     try:
         largeur, hauteur = (int(n) for n in BITMAP.lower().split("x", 1))
     except ValueError:
         journal.warning("EVOLIS_BITMAP=%r illisible : la carte part telle quelle", BITMAP)
-        return image
+        return _decaler(image)
 
     if (image.width, image.height) == (largeur, hauteur):
-        return image
+        return _decaler(image)
     if image.width > largeur or image.height > hauteur:
         raise ImpressionImpossible("erreur", f"carte plus grande que le panneau {largeur} × {hauteur}")
 
     panneau = Image.new("1", (largeur, hauteur), 1)  # 1 = blanc en mode « 1 »
     panneau.paste(image, ((largeur - image.width) // 2, (hauteur - image.height) // 2))
-    return panneau
+    return _decaler(panneau)
 
 
 # ── Le serveur ──────────────────────────────────────────────────────────────────────────────────
@@ -894,7 +929,7 @@ def main() -> int:
 
         if options.essai_noir:
             appareil.imprimer(carte_noire())
-            print(f"Aplat noir envoyé (marge {MARGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}, vitesse {VITESSE or 'usine'}).")
+            print(f"Aplat noir envoyé (marge {MARGE_MM or '0'} mm, arrondi {ARRONDI_MM or 'suit la carte'}, décalage {DECALAGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}, vitesse {VITESSE or 'usine'}).")
             return 0
 
         if options.essai_sortie:
@@ -965,7 +1000,7 @@ def lire_les_reglages() -> int:
         if not session.export_config(str(chemin)):
             print(f"export impossible ({session.get_last_error().name})")
             return 1
-        print(f"posé ici : marge {MARGE_MM or '0'} mm · contraste {CONTRASTE or 'usine'} · vitesse {VITESSE or 'usine'}")
+        print(f"posé ici : marge {MARGE_MM or '0'} mm · arrondi {ARRONDI_MM or 'suit la carte'} · décalage {DECALAGE_MM or '0'} mm · contraste {CONTRASTE or 'usine'} · vitesse {VITESSE or 'usine'}")
         cles = ("Monochrome", "Heat", "Black", "Dark", "Speed", "Contrast", "Orientation", "Ribbon", "Resolution")
         for ligne in sorted(chemin.read_text().splitlines()):
             if any(c in ligne.split("=", 1)[0] for c in cles):
