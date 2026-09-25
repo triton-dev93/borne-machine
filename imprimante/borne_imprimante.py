@@ -356,9 +356,12 @@ class Evolis:
             if PANNEAU != "noir":
                 from PIL import Image
 
-                envoi = png.with_name(png.stem + "-rvb.png")
+                # En BMP 24 bits : c'est le format que la bibliothèque manipule elle-même
+                # (« evox0page%d.bmp »), et le PNG ne semble pas dans ce qu'elle sait lire — le
+                # PNG donnait « Missing front bitmap bundle » même en RVB (25/09).
+                envoi = png.with_name(png.stem + "-face.bmp")
                 with Image.open(png) as image:
-                    image.convert("RGB").save(envoi, "PNG")
+                    image.convert("RGB").save(envoi, "BMP")
 
             poser = session.set_black if PANNEAU == "noir" else session.set_image
             if not poser(self.evolis.CardFace.FRONT, str(envoi)):
