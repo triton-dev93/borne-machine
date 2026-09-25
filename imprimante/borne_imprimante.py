@@ -70,6 +70,9 @@ BITMAP = os.environ.get("EVOLIS_BITMAP", "648x1016")
 #: que d'espérer qu'il devine : `SettingKey.Orientation` accepte PORTRAIT ou LANDSCAPE_CC90.
 ORIENTATION = os.environ.get("EVOLIS_ORIENTATION", "PORTRAIT")
 
+#: Combien de secondes un geste d'impression attend une imprimante occupée avant de renoncer.
+PATIENCE = float(os.environ.get("EVOLIS_PATIENCE", "20"))
+
 #: Une carte n'est pas coupée au millimètre près : on tolère l'arrondi de pdftoppm, pas plus.
 TOLERANCE_PX = 3
 
@@ -199,34 +202,50 @@ class Evolis:
 
         self.evolis = evolis
 
-    def _ouvrir(self):
+    def _ouvrir(self, patience: float = 0.0):
         """Ouvre l'imprimante : désignée, découverte par CUPS, ou à défaut par son nœud USB.
 
         Rend `(libellé, connexion)`. Le libellé sert au journal et à dire le modèle.
+
+        `patience` : combien de secondes réessayer avant de conclure qu'elle est injoignable. Une
+        imprimante qui finit de sortir une carte, ou qui se ré-annonce sur l'USB juste après, refuse
+        la connexion quelques secondes — vu le jour J : la carte de test sortait, et le calibrage
+        lancé dans la foulée répondait « injoignable ». Le battement de chaque minute n'attend pas
+        (patience 0) ; un geste d'impression, si.
         """
+        limite = time.monotonic() + patience
+        while True:
+            ouverte = self._essayer()
+            if ouverte is not None:
+                return ouverte
+            if time.monotonic() >= limite:
+                raise ImpressionImpossible("hors_ligne", "aucune imprimante Evolis joignable (ni CUPS, ni USB direct)")
+            time.sleep(1.5)
+
+    def _essayer(self):
+        """Une tentative d'ouverture : `(libellé, connexion)`, ou `None` si rien ne répond."""
         direct = self.evolis.OpenMode.DIRECT
 
         if IMPRIMANTE:
             co = self.evolis.Connection(IMPRIMANTE, direct)
-            if not co.get_context() is not None:
-                raise ImpressionImpossible("hors_ligne", f"{IMPRIMANTE} ne répond pas")
-            return IMPRIMANTE, co
+            return (IMPRIMANTE, co) if co.get_context() is not None else None
 
         appareils = list(self.evolis.Evolis.get_devices())
         if appareils:
             # Une borne a une imprimante. S'il y en avait plusieurs, la première en ligne fait l'affaire.
             appareil = next((d for d in appareils if d.isOnline), appareils[0])
             co = self.evolis.Connection(appareil)
-            if not co.get_context() is not None:
-                raise ImpressionImpossible("hors_ligne", f"connexion refusée par {appareil.name}")
-            return self.evolis.Evolis.get_model_name(appareil.model), co
+            if co.get_context() is not None:
+                return self.evolis.Evolis.get_model_name(appareil.model), co
 
-        # Aucune file CUPS : on va la chercher sur l'USB, directement.
+        # Aucune file CUPS : on va la chercher sur l'USB, directement. Les nœuds se relisent à chaque
+        # tentative : après une ré-annonce USB, `lp1` peut être devenu `lp0`.
         for adresse in candidats_directs():
             co = self.evolis.Connection(adresse, direct)
             if co.get_context() is not None:
                 return adresse, co
-        raise ImpressionImpossible("hors_ligne", "aucune imprimante Evolis joignable (ni CUPS, ni USB direct)")
+
+        return None
 
     def _modele(self, libelle: str, co) -> str:
         try:
@@ -288,7 +307,7 @@ class Evolis:
 
     def imprimer(self, png: Path) -> None:
         """Une carte. Lève {@see ImpressionImpossible} avec un motif que l'écran sait dire."""
-        _, co = self._ouvrir()
+        _, co = self._ouvrir(patience=PATIENCE)
         try:
             session = self.evolis.PrintSession(co, getattr(self.evolis.RibbonType, self.RUBAN))
             if not session.init_with_ribbon(getattr(self.evolis.RibbonType, self.RUBAN)):
@@ -325,7 +344,7 @@ class Evolis:
         return "erreur"
 
     def carte_de_test(self) -> bool:
-        _, co = self._ouvrir()
+        _, co = self._ouvrir(patience=PATIENCE)
         try:
             # ⚠ Type 1 = « Stt », RECTO seul. Le type 0 par défaut est recto-verso : la Zenius 2 est
             # simplex et n'a rien à en faire.
@@ -338,7 +357,7 @@ class Evolis:
 
     def fiche(self) -> None:
         """Tout ce que l'imprimante et son ruban disent d'eux-mêmes — pour un ruban refusé surtout."""
-        libelle, co = self._ouvrir()
+        libelle, co = self._ouvrir(patience=PATIENCE)
         try:
             info, etat, ruban = co.get_info(), co.get_state(), co.get_ribbon_info()
             print(f"adresse     : {libelle}")
@@ -357,7 +376,7 @@ class Evolis:
 
     def debloquer(self) -> None:
         """Après un bourrage : on efface l'erreur mécanique et on éjecte ce qui traîne."""
-        _, co = self._ouvrir()
+        _, co = self._ouvrir(patience=PATIENCE)
         try:
             co.clear_mechanical_errors()
             co.reject_card()
@@ -741,6 +760,13 @@ def calibrage(appareil) -> int:
                         f"-r{DPI}", f"-sOutputFile={png}", str(ps)], check=True, capture_output=True)
     except (subprocess.SubprocessError, FileNotFoundError):
         sys.exit("ghostscript (gs) est nécessaire pour --calibrage")
+
+    # ⚠ Le même chemin qu'une vraie carte : centrée sur le panneau de l'imprimante. Sans cela on
+    # mesurerait une géométrie qui n'est pas celle des cartes qu'on imprime.
+    from PIL import Image
+
+    with Image.open(png) as image:
+        _fond_perdu(image.convert("1")).save(png, "PNG", bits=1)
 
     appareil.imprimer(png)
     print("Carte de calibrage imprimée. Mesurer le cadre : il doit être à 2 mm de chaque bord.")
