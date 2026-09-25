@@ -17,7 +17,7 @@ EnvironmentFile=/etc/borne/imprimante.env
 Environment=HOME=/var/lib/borne-imprimante
 StateDirectory=borne-imprimante
 StateDirectoryMode=0750
-ReadWritePaths=-/opt/evolis
+ReadWritePaths=-/opt/evolis -/etc/printers
 SupplementaryGroups=_evolis
 ExecStart=/opt/borne/venv/bin/python /opt/borne/imprimante/borne_imprimante.py
 Restart=always

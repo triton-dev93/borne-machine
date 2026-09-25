@@ -171,6 +171,13 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     # Le bit setgid (2775) fait hériter le groupe `_evolis` à tout ce qu'elle y créera ensuite.
     install -d -m 2775 -o root -g _evolis /opt/evolis /opt/evolis/etc /opt/evolis/etc/printers
     chgrp -R _evolis /opt/evolis && chmod -R g+rwX /opt/evolis
+    # ⚠ Sans le pilote Evolis installé, son « dossier de configuration » reste VIDE, et la
+    # bibliothèque range alors la configuration de l'imprimante à la racine : /etc/printers/
+    # (« Could not create folder /etc/printers/: Permission denied », 25/09). C'est là qu'elle
+    # prépare l'image de face : sans ce dossier, « Missing front bitmap bundle ». Ni CUPS ni le
+    # système ne s'en servent.
+    install -d -m 2775 -o root -g _evolis /etc/printers
+    chgrp -R _evolis /etc/printers && chmod -R g+rwX /etc/printers
     install -d -m 0750 -o borne-imprimante -g borne-imprimante /var/lib/borne-imprimante
 
     # Le jeton D'ABORD : si une étape suivante échoue (le SDK, le réseau), il est gardé, et

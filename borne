@@ -263,10 +263,12 @@ cmd_diag() {
 
     gras "Les dossiers d'Evolis"
     if id -nG borne-imprimante 2>/dev/null | grep -qw _evolis; then vert "borne-imprimante est dans le groupe _evolis"; else rouge "borne-imprimante n'est PAS dans le groupe _evolis — « borne maj »"; fi
-    for d in /opt/evolis /opt/evolis/etc/printers /var/lib/borne-imprimante; do
+    for d in /opt/evolis /opt/evolis/etc/printers /etc/printers /var/lib/borne-imprimante; do
         if [[ -d "$d" ]]; then gris "$(stat -c '%A %U:%G' "$d")  $d"; else rouge "absent : $d"; fi
     done
-    if sudo -u borne-imprimante test -w /opt/evolis/etc/printers 2>/dev/null; then vert "le démon peut écrire dans /opt/evolis/etc/printers"; else rouge "le démon NE PEUT PAS écrire dans /opt/evolis/etc/printers"; fi
+    for d in /opt/evolis/etc/printers /etc/printers; do
+        if sudo -u borne-imprimante test -w "$d" 2>/dev/null; then vert "le démon peut écrire dans $d"; else rouge "le démon NE PEUT PAS écrire dans $d"; fi
+    done
 
     gras "Le SDK Evolis, sous l'identité du démon"
     sudo -u borne-imprimante env HOME=/var/lib/borne-imprimante "$PY_DEMON" - <<'SONDE' || rouge "le SDK ne se charge pas — « borne maj » réinstalle l'environnement"
