@@ -205,13 +205,13 @@ SCRIPT_DEMON="/opt/borne/imprimante/borne_imprimante.py"
 # « connexion refusée » au hasard — le pire des symptômes, celui qui ne se reproduit pas. Le geste
 # se joue sous l'identité du démon : ce qui marche ici marchera pour lui, droits USB compris.
 geste_imprimante() {
-    local option="$1" etait_actif=0 code=0
+    local etait_actif=0 code=0
     systemctl is-active --quiet borne-imprimante 2>/dev/null && etait_actif=1
     if [[ $etait_actif -eq 1 ]]; then
         systemctl stop borne-imprimante
         gris "Démon suspendu le temps du geste."
     fi
-    sudo -u borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$option" || code=$?
+    sudo -u borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$@" || code=$?
     if [[ $etait_actif -eq 1 ]]; then
         systemctl start borne-imprimante
         gris "Démon relancé."
@@ -220,6 +220,19 @@ geste_imprimante() {
 }
 
 # Tout ce qu'il faut savoir quand « rien ne marche », en une commande, à lire ou à photographier.
+# Fixer une sortie pour de bon : elle s'écrit à côté du jeton, et le démon repart avec.
+cmd_sortie() {
+    local clef="$1" nom="${2:-}"
+    [[ -f "$ENV_DEMON" ]] || { rouge "Pas d'imprimante configurée ici ($ENV_DEMON absent)."; exit 1; }
+    case "$nom" in
+        standard|manuelle|ejection|rejet) ;;
+        *) rouge "borne ${clef/EVOLIS_SORTIE_REJET/sortie-rejet} <standard|manuelle|ejection|rejet>"; gris "${clef/EVOLIS_SORTIE/sortie} : trouver la bonne d'abord avec « borne demon sortie <nom> »"; exit 1 ;;
+    esac
+    ecrire "$ENV_DEMON" "$clef" "$nom"
+    systemctl restart borne-imprimante
+    vert "$clef=$nom — le démon repart avec."
+}
+
 cmd_diag() {
     gras "USB : ce que le noyau voit"
     if lsusb 2>/dev/null | grep -i '0f49' ; then :; else
@@ -284,7 +297,10 @@ cmd_demon() {
         test)      geste_imprimante --test ;;
         calibrage) geste_imprimante --calibrage ;;
         debloquer) geste_imprimante --debloquer ;;
-        *) rouge "borne demon <stop|demarre|relance|etat|diag|sonde|test|calibrage|debloquer>"; exit 1 ;;
+        sortie)
+            [[ -n "${2:-}" ]] || { rouge "borne demon sortie <standard|manuelle|ejection|rejet>"; exit 1; }
+            geste_imprimante --essai-sortie "$2" ;;
+        *) rouge "borne demon <stop|demarre|relance|etat|diag|sonde|test|calibrage|debloquer|sortie X>"; exit 1 ;;
     esac
 }
 
@@ -408,6 +424,9 @@ borne — exploitation de la machine du hall
 
   borne journal [-f]          les traces des deux services
   borne demon <...>           stop | demarre | relance | etat | diag | sonde | test | calibrage | debloquer
+  borne demon sortie <nom>    imprime UNE carte marquée par cette sortie, pour voir d'où elle tombe
+  borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
+  borne sortie-rejet <nom>    fixe celle des cartes ratées
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
   borne maj                   git pull puis réinstallation
@@ -429,7 +448,9 @@ case "${1:-aide}" in
     jeton-impression)   cmd_jeton_impression ;;
     domaine)            shift || true; cmd_domaine "${1:-}" ;;
     journal|logs)       shift || true; cmd_journal "${1:-}" ;;
-    demon)              shift || true; cmd_demon "${1:-etat}" ;;
+    demon)              shift || true; cmd_demon "${1:-etat}" "${2:-}" ;;
+    sortie)             shift || true; cmd_sortie EVOLIS_SORTIE "${1:-}" ;;
+    sortie-rejet)       shift || true; cmd_sortie EVOLIS_SORTIE_REJET "${1:-}" ;;
     chrome)             shift || true; cmd_chrome "${1:-}" ;;
     maj)                cmd_maj ;;
     cle-github)         shift || true; if [[ "${1:-}" == "verifier" ]]; then cmd_cle_github_verifier; else cmd_cle_github; fi ;;

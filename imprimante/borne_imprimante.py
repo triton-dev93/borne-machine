@@ -70,6 +70,14 @@ BITMAP = os.environ.get("EVOLIS_BITMAP", "648x1016")
 #: que d'espérer qu'il devine : `SettingKey.Orientation` accepte PORTRAIT ou LANDSCAPE_CC90.
 ORIENTATION = os.environ.get("EVOLIS_ORIENTATION", "PORTRAIT")
 
+#: Par où sortent les cartes. La Zenius en a plusieurs (bac de réception, carte par carte,
+#: éjection immédiate, rejet) : lesquelles tombent où dépend du montage dans le meuble, et ça se
+#: CONSTATE (`--essai-sortie`), ça ne se devine pas. Vide = le réglage de l'imprimante.
+SORTIES = {"standard": "STANDARD", "manuelle": "MANUAL", "ejection": "EJECT", "rejet": "ERROR"}
+SORTIE = os.environ.get("EVOLIS_SORTIE", "").strip().lower()
+#: Où vont les cartes RATÉES : pas dans la main du client.
+SORTIE_REJET = os.environ.get("EVOLIS_SORTIE_REJET", "").strip().lower()
+
 #: Combien de secondes un geste d'impression attend une imprimante occupée avant de renoncer.
 PATIENCE = float(os.environ.get("EVOLIS_PATIENCE", "20"))
 
@@ -319,6 +327,8 @@ class Evolis:
                 # imprimée en paysage est une carte perdue, et le PVC ne se recycle pas.
                 session.set_setting(self.evolis.SettingKey.Orientation, ORIENTATION)
 
+            self._regler_les_sorties(co)
+
             if not session.set_black(self.evolis.CardFace.FRONT, str(png)):
                 raise ImpressionImpossible("erreur", "image refusée par le pilote")
 
@@ -327,6 +337,40 @@ class Evolis:
                 raise ImpressionImpossible(self._motif_du_code(code, co), f"impression refusée : {code.name}")
         finally:
             co.close()
+
+    def _regler_les_sorties(self, co, sortie: str | None = None) -> None:
+        """Pose la sortie des cartes réussies et celle des ratées, si elles sont réglées."""
+        for nom, poser, quoi in (
+            (sortie or SORTIE, co.set_output_tray, "sortie"),
+            (SORTIE_REJET, co.set_error_tray, "sortie des cartes ratées"),
+        ):
+            if not nom:
+                continue
+            if nom not in SORTIES:
+                journal.warning("%s « %s » inconnue (%s)", quoi, nom, ", ".join(SORTIES))
+                continue
+            if not poser(getattr(self.evolis.OutputTray, SORTIES[nom])):
+                journal.warning("%s « %s » refusée par l'imprimante (%s)", quoi, nom, co.get_last_error().name)
+
+    def essai_de_sortie(self, png: Path, sortie: str) -> None:
+        """Imprime UNE carte par la sortie demandée, puis remet le réglage d'avant."""
+        _, co = self._ouvrir(patience=PATIENCE)
+        try:
+            avant = co.get_output_tray()
+        finally:
+            co.close()
+        global SORTIE
+        garde, SORTIE = SORTIE, sortie
+        try:
+            self.imprimer(png)
+        finally:
+            SORTIE = garde
+            if avant is not None:
+                _, co = self._ouvrir(patience=PATIENCE)
+                try:
+                    co.set_output_tray(avant)
+                finally:
+                    co.close()
 
     def _motif_du_code(self, code, co) -> str:
         """Un code de retour ne dit pas grand-chose ; l'état qui suit, si."""
@@ -364,6 +408,12 @@ class Evolis:
             if info is not None:
                 print(f"imprimante  : {info.modelName}  n° {info.serialNumber}  micrologiciel {info.fwVersion}  zone « {info.zone} »")
             print(f"état brut   : {etat.major.name}/{etat.minor.name}")
+            try:
+                sortie, rejet = co.get_output_tray(), co.get_error_tray()
+                print(f"sorties     : cartes {sortie.name if sortie else '?'} · ratées {rejet.name if rejet else '?'}"
+                      f"   (réglage démon : {SORTIE or 'imprimante'} / {SORTIE_REJET or 'imprimante'})")
+            except Exception:  # noqa: BLE001 — une fiche ne casse pas sur un détail
+                pass
             if ruban is None:
                 print(f"ruban       : illisible ({co.get_last_error().name}) — pas de ruban, ou puce non lue")
             else:
@@ -638,6 +688,8 @@ def main() -> int:
     parseur.add_argument("--calibrage", action="store_true", help="imprimer une carte de repères à mesurer")
     parseur.add_argument("--debloquer", action="store_true", help="effacer une erreur mécanique et éjecter la carte")
     parseur.add_argument("--sonde", action="store_true", help="essayer toutes les façons d'atteindre l'imprimante")
+    parseur.add_argument("--essai-sortie", metavar="SORTIE", choices=sorted(SORTIES),
+                         help="imprimer une carte marquée par cette sortie, pour voir d'où elle tombe")
     parseur.add_argument("-v", "--verbeux", action="store_true")
     options = parseur.parse_args()
 
@@ -680,6 +732,9 @@ def main() -> int:
 
         if options.calibrage:
             return calibrage(appareil)
+
+        if options.essai_sortie:
+            return essai_de_sortie(appareil, options.essai_sortie)
     except ImpressionImpossible as panne:
         print(f"imprimante : {panne.motif} — {panne}")
         return 1
@@ -734,6 +789,38 @@ def sonder() -> int:
         return 0
     print("\n→ Rien ne répond. Droits sur le nœud (groupe borne-imprimante) ? Imprimante allumée ?")
     return 1
+
+
+def carte_marquee(texte: str) -> Path:
+    """Une carte blanche qui porte un mot en grand : pour reconnaître une carte sortie."""
+    from PIL import Image
+
+    png = Path(tempfile.gettempdir()) / "borne-marquee.png"
+    ps = Path(tempfile.gettempdir()) / "borne-marquee.ps"
+    ps.write_text("\n".join([
+        "%!PS", "<< /PageSize [153.07 243.78] >> setpagedevice", "0 setgray",
+        "/Helvetica-Bold findfont 20 scalefont setfont",
+        "20 150 moveto (SORTIE) show",
+        f"20 120 moveto ({texte.upper()}) show",
+        "5.67 5.67 141.73 232.44 rectstroke", "showpage",
+    ]))
+    try:
+        subprocess.run(["gs", "-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pngmono",
+                        f"-r{DPI}", f"-sOutputFile={png}", str(ps)], check=True, capture_output=True)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        sys.exit("ghostscript (gs) est nécessaire")
+    with Image.open(png) as image:
+        _fond_perdu(image.convert("1")).save(png, "PNG", bits=1)
+    return png
+
+
+def essai_de_sortie(appareil, sortie: str) -> int:
+    if not hasattr(appareil, "essai_de_sortie"):
+        appareil.imprimer(carte_marquee(sortie))
+        return 0
+    appareil.essai_de_sortie(carte_marquee(sortie), sortie)
+    print(f"Carte « SORTIE {sortie.upper()} » envoyée. D'où est-elle tombée ?")
+    return 0
 
 
 def calibrage(appareil) -> int:
