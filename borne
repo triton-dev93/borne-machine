@@ -318,8 +318,15 @@ cmd_diag() {
     for d in /opt/evolis /opt/evolis/etc/printers /etc/printers /var/lib/borne-imprimante; do
         if [[ -d "$d" ]]; then gris "$(stat -c '%A %U:%G' "$d")  $d"; else rouge "absent : $d"; fi
     done
+    gris "identité du démon quand il agit : $(sudo -u borne-imprimante id 2>&1)"
     for d in /opt/evolis/etc/printers /etc/printers; do
-        if sudo -u borne-imprimante test -w "$d" 2>/dev/null; then vert "le démon peut écrire dans $d"; else rouge "le démon NE PEUT PAS écrire dans $d"; fi
+        # Un vrai essai d'écriture, pas `test -w` : c'est ce que fera la bibliothèque.
+        local sortie
+        if sortie="$(sudo -u borne-imprimante sh -c "mkdir -p '$d/.essai-borne' && rmdir '$d/.essai-borne'" 2>&1)"; then
+            vert "le démon peut créer un dossier dans $d"
+        else
+            rouge "le démon NE PEUT PAS créer de dossier dans $d : $sortie"
+        fi
     done
 
     gras "Le SDK Evolis, sous l'identité du démon"

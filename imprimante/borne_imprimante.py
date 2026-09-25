@@ -486,7 +486,9 @@ class Evolis:
             else:
                 print(f"ruban       : {ruban.description}  réf. {ruban.productCode}  type {ruban.type.name}  zone « {ruban.zone} »")
                 print(f"              {ruban.remaining}/{ruban.capacity} impressions restantes")
-                if info is not None and ruban.zone and info.zone and ruban.zone != info.zone:
+                # « 0000 » = un ruban sans zone, accepté partout : ce n'est pas une différence.
+                # (Vu le 25/09 : ruban RCT223NAAA en 0000 sur une imprimante en E000, imprimant bien.)
+                if info is not None and ruban.zone and info.zone and ruban.zone.strip("0") and ruban.zone != info.zone:
                     print("  ⚠ ZONES DIFFÉRENTES : ce ruban n'est pas vendu pour cette imprimante — à échanger chez le revendeur.")
         finally:
             co.close()
