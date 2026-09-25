@@ -78,6 +78,12 @@ SORTIE = os.environ.get("EVOLIS_SORTIE", "").strip().lower()
 #: Où vont les cartes RATÉES : pas dans la main du client.
 SORTIE_REJET = os.environ.get("EVOLIS_SORTIE_REJET", "").strip().lower()
 
+#: Comment l'image part à l'imprimante. « image » = l'image de la face, ce qu'attend un ruban
+#: MONOCHROME ; « noir » = le panneau K d'un ruban couleur (`set_black`). Le démon envoyait « noir »
+#: sur le ruban noir de la Zenius : la face restait vide, et l'imprimante répondait PRINT_EDATA
+#: (« données invalides ») — vu le 25/09, la carte de test du constructeur sortant pourtant.
+PANNEAU = os.environ.get("EVOLIS_PANNEAU", "image").strip().lower()
+
 #: Combien de secondes un geste d'impression attend une imprimante occupée avant de renoncer.
 PATIENCE = float(os.environ.get("EVOLIS_PATIENCE", "20"))
 
@@ -209,6 +215,15 @@ class Evolis:
         import evolis  # importé ici pour que `--aide` marche sans le SDK
 
         self.evolis = evolis
+        # Le journal de la bibliothèque Evolis : c'est LUI qui dit pourquoi une impression est
+        # refusée (quel réglage, quelle image). Il vit en mémoire, à côté des cartes, et ne garde
+        # que la dernière impression.
+        self.journal_sdk = dossier_de_travail() / "libevolis.log"
+        try:
+            evolis.Evolis.set_log_path(str(self.journal_sdk))
+            evolis.Evolis.set_log_level(evolis.LogLevel.DEBUG)
+        except Exception:  # noqa: BLE001 — un journal qui manque ne doit pas empêcher d'imprimer
+            pass
 
     def _ouvrir(self, patience: float = 0.0):
         """Ouvre l'imprimante : désignée, découverte par CUPS, ou à défaut par son nœud USB.
@@ -329,14 +344,55 @@ class Evolis:
 
             self._regler_les_sorties(co)
 
-            if not session.set_black(self.evolis.CardFace.FRONT, str(png)):
-                raise ImpressionImpossible("erreur", "image refusée par le pilote")
+            try:
+                self.journal_sdk.write_text("")  # seule cette impression dans le journal
+            except OSError:
+                pass
+
+            poser = session.set_black if PANNEAU == "noir" else session.set_image
+            if not poser(self.evolis.CardFace.FRONT, str(png)):
+                raise ImpressionImpossible(
+                    "erreur", f"image refusée par le pilote ({session.get_last_error().name})" + self._diagnostic(session, png),
+                )
 
             code = session.print()
             if code != self.evolis.ReturnCode.OK:
-                raise ImpressionImpossible(self._motif_du_code(code, co), f"impression refusée : {code.name}")
+                raise ImpressionImpossible(
+                    self._motif_du_code(code, co), f"impression refusée : {code.name}" + self._diagnostic(session, png),
+                )
         finally:
             co.close()
+
+    def _diagnostic(self, session, png: Path) -> str:
+        """Ce qu'on a envoyé, et ce que la bibliothèque en a dit : de quoi trouver la cause en une fois."""
+        lignes = []
+        try:
+            from PIL import Image
+
+            with Image.open(png) as image:
+                lignes.append(f"image envoyée : {image.width} × {image.height}, mode {image.mode}, panneau « {PANNEAU} »")
+        except Exception:  # noqa: BLE001
+            pass
+
+        reglages = Path(tempfile.gettempdir()) / "borne-session.txt"
+        try:
+            if session.export_config(str(reglages)):
+                utiles = ("GRibbonType", "GPrintingMode", "Orientation", "Duplex", "GDuplexType",
+                          "FBlackManagement", "BBlackManagement", "GInputTray", "GOutputTray", "Resolution")
+                lignes += [f"réglage {l}" for l in reglages.read_text().splitlines() if l.split("=", 1)[0].strip() in utiles]
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            tout = [l for l in self.journal_sdk.read_text(errors="replace").splitlines() if l.strip()]
+            # Les avertissements et erreurs d'abord (« W> », « E> ») : ce sont eux qui nomment la
+            # cause. Le bavardage de débogage seulement s'il n'y a rien d'autre.
+            graves = [l for l in tout if l[:2] in ("W>", "E>")]
+            lignes += ["libevolis : " + l[-220:] for l in (graves[-10:] or tout[-6:])]
+        except OSError:
+            pass
+
+        return ("\n  " + "\n  ".join(lignes)) if lignes else ""
 
     def _regler_les_sorties(self, co, sortie: str | None = None) -> None:
         """Pose la sortie des cartes réussies et celle des ratées, si elles sont réglées."""
