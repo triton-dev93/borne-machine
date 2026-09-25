@@ -84,6 +84,18 @@ SORTIE_REJET = os.environ.get("EVOLIS_SORTIE_REJET", "").strip().lower()
 #: (« données invalides ») — vu le 25/09, la carte de test du constructeur sortant pourtant.
 PANNEAU = os.environ.get("EVOLIS_PANNEAU", "image").strip().lower()
 
+#: Une marge BLANCHE, en mm, autour de chaque carte. ⚠ Le noir poussé jusqu'au bord fait coller le
+#: ruban à la carte : il ne s'en décolle plus à la sortie de la tête, la carte se coince et le ruban
+#: se déchire — vu le 25/09 sur les pass à aplat noir, deux fois de suite. Le dessin fait 86 mm
+#: pour une carte de 85,6 : sans marge, le noir DÉBORDE des petits côtés, ceux par où la carte entre
+#: et sort. 1 mm suffit d'ordinaire ; « 0 » rend l'aplat plein bord (à ses risques).
+MARGE_MM = os.environ.get("EVOLIS_MARGE_MM", "1").strip()
+
+#: La chauffe du noir : `FMonochromeContrast` (1 à 20, 10 en usine) et `IGMonochromeSpeed` (1 à 10,
+#: 10 en usine). Trop chaud, le ruban fond sur la carte. Vide = le réglage de l'imprimante.
+CONTRASTE = os.environ.get("EVOLIS_CONTRASTE", "").strip()
+VITESSE = os.environ.get("EVOLIS_VITESSE", "").strip()
+
 #: Combien de secondes un geste d'impression attend une imprimante occupée avant de renoncer.
 PATIENCE = float(os.environ.get("EVOLIS_PATIENCE", "20"))
 
@@ -345,6 +357,7 @@ class Evolis:
                 # imprimée en paysage est une carte perdue, et le PVC ne se recycle pas.
                 session.set_setting(self.evolis.SettingKey.Orientation, ORIENTATION)
 
+            self._regler_la_chauffe(session)
             self._regler_les_sorties(co)
 
             try:
@@ -410,6 +423,20 @@ class Evolis:
             pass
 
         return ("\n  " + "\n  ".join(lignes)) if lignes else ""
+
+    def _regler_la_chauffe(self, session) -> None:
+        """Pose contraste et vitesse du noir, s'ils sont réglés. Une valeur hors plage est dite, pas tue."""
+        for valeur, cle, plage in (
+            (CONTRASTE, "FMonochromeContrast", range(1, 21)),
+            (VITESSE, "IGMonochromeSpeed", range(1, 11)),
+        ):
+            if not valeur:
+                continue
+            if not valeur.isdigit() or int(valeur) not in plage:
+                journal.warning("%s=%r hors de %d–%d : réglage de l'imprimante gardé", cle, valeur, plage[0], plage[-1])
+                continue
+            if not session.set_setting(getattr(self.evolis.SettingKey, cle), f"VAL{int(valeur)}"):
+                journal.warning("%s=VAL%s refusé par le pilote", cle, valeur)
 
     def _regler_les_sorties(self, co, sortie: str | None = None) -> None:
         """Pose la sortie des cartes réussies et celle des ratées, si elles sont réglées."""
@@ -599,7 +626,7 @@ def rasteriser(pdf: bytes, travail: Path) -> Path:
                 f"attendu {CARTE_PX[0]} × {CARTE_PX[1]} à {DPI} dpi",
             )
 
-        image = _fond_perdu(image)
+        image = _fond_perdu(_marge(image))
         pret = travail / "carte-k.png"
         image.save(pret, "PNG", bits=1, optimize=True)
 
@@ -608,6 +635,36 @@ def rasteriser(pdf: bytes, travail: Path) -> Path:
 
 def _proche(taille: tuple[int, int], attendu: tuple[int, int]) -> bool:
     return all(abs(a - b) <= TOLERANCE_PX for a, b in zip(taille, attendu))
+
+
+def _marge(image):
+    """Blanchit un cadre de {@see MARGE_MM} autour de la carte : le noir ne touche plus le bord."""
+    from PIL import ImageDraw
+
+    try:
+        mm = float(MARGE_MM.replace(",", ".")) if MARGE_MM else 0.0
+    except ValueError:
+        journal.warning("EVOLIS_MARGE_MM=%r illisible : 1 mm", MARGE_MM)
+        mm = 1.0
+    px = round(max(0.0, min(mm, 4.0)) * DPI / 25.4)
+    if px == 0:
+        return image
+
+    image = image.copy()
+    trait = ImageDraw.Draw(image)
+    l, h = image.size
+    for boite in ((0, 0, l - 1, px - 1), (0, h - px, l - 1, h - 1), (0, 0, px - 1, h - 1), (l - px, 0, l - 1, h - 1)):
+        trait.rectangle(boite, fill=1)  # 1 = blanc en mode « 1 »
+    return image
+
+
+def carte_noire() -> Path:
+    """Un aplat noir plein, par le chemin d'une vraie carte : le pire cas pour le ruban."""
+    from PIL import Image
+
+    png = Path(tempfile.gettempdir()) / "borne-noire.png"
+    _fond_perdu(_marge(Image.new("1", CARTE_PX, 0))).save(png, "PNG", bits=1)
+    return png
 
 
 def _fond_perdu(image):
@@ -775,6 +832,8 @@ def main() -> int:
     parseur.add_argument("--debloquer", action="store_true", help="effacer une erreur mécanique et éjecter la carte")
     parseur.add_argument("--sonde", action="store_true", help="essayer toutes les façons d'atteindre l'imprimante")
     parseur.add_argument("--reglages", action="store_true", help="les réglages d'impression en vigueur (noir, chauffe, vitesse)")
+    parseur.add_argument("--essai-noir", action="store_true",
+                         help="imprimer un aplat noir plein (marge et chauffe en vigueur) : le pire cas du ruban")
     parseur.add_argument("--essai-sortie", metavar="SORTIE", choices=sorted(SORTIES),
                          help="imprimer une carte marquée par cette sortie, pour voir d'où elle tombe")
     parseur.add_argument("-v", "--verbeux", action="store_true")
@@ -822,6 +881,11 @@ def main() -> int:
 
         if options.calibrage:
             return calibrage(appareil)
+
+        if options.essai_noir:
+            appareil.imprimer(carte_noire())
+            print(f"Aplat noir envoyé (marge {MARGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}, vitesse {VITESSE or 'usine'}).")
+            return 0
 
         if options.essai_sortie:
             return essai_de_sortie(appareil, options.essai_sortie)
@@ -891,6 +955,7 @@ def lire_les_reglages() -> int:
         if not session.export_config(str(chemin)):
             print(f"export impossible ({session.get_last_error().name})")
             return 1
+        print(f"posé ici : marge {MARGE_MM or '0'} mm · contraste {CONTRASTE or 'usine'} · vitesse {VITESSE or 'usine'}")
         cles = ("Monochrome", "Heat", "Black", "Dark", "Speed", "Contrast", "Orientation", "Ribbon", "Resolution")
         for ligne in sorted(chemin.read_text().splitlines()):
             if any(c in ligne.split("=", 1)[0] for c in cles):

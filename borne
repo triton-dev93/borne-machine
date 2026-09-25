@@ -211,8 +211,11 @@ geste_imprimante() {
         systemctl stop borne-imprimante
         gris "Démon suspendu le temps du geste."
     fi
-    # Le même $HOME que le service : la bibliothèque Evolis y range sa configuration.
-    sudo -u borne-imprimante env HOME=/var/lib/borne-imprimante "$PY_DEMON" "$SCRIPT_DEMON" "$@" || code=$?
+    # Le même $HOME que le service : la bibliothèque Evolis y range sa configuration. Et les mêmes
+    # réglages EVOLIS_* (sortie, marge, chauffe) : un essai doit imprimer comme une vraie carte.
+    local reglages=()
+    [[ -f "$ENV_DEMON" ]] && mapfile -t reglages < <(grep -E '^EVOLIS_[A-Z_]+=' "$ENV_DEMON" || true)
+    sudo -u borne-imprimante env HOME=/var/lib/borne-imprimante "${reglages[@]}" "$PY_DEMON" "$SCRIPT_DEMON" "$@" || code=$?
     if [[ $etait_actif -eq 1 ]]; then
         systemctl start borne-imprimante
         gris "Démon relancé."
@@ -284,6 +287,36 @@ cmd_sortie() {
     ecrire "$ENV_DEMON" "$clef" "$nom"
     systemctl restart borne-imprimante
     vert "$clef=$nom — le démon repart avec."
+}
+
+# La chauffe et la marge du noir. Se règle à l'essai (« borne demon essai-noir »), pas au hasard.
+cmd_reglage() {
+    local quoi="${1:-}" valeur="${2:-}" clef bornes
+    [[ -f "$ENV_DEMON" ]] || { rouge "Pas d'imprimante configurée ici ($ENV_DEMON absent)."; exit 1; }
+    case "$quoi" in
+        contraste) clef=EVOLIS_CONTRASTE; bornes="1 20" ;;
+        vitesse)   clef=EVOLIS_VITESSE;   bornes="1 10" ;;
+        marge)     clef=EVOLIS_MARGE_MM;  bornes="" ;;
+        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm> [valeur|usine]"
+           gris "sans valeur : ce qui est posé ; « usine » : on rend la main à l'imprimante"; exit 1 ;;
+    esac
+    if [[ -z "$valeur" ]]; then
+        grep -E "^$clef=" "$ENV_DEMON" || gris "$clef non posé (réglage par défaut)"; return
+    fi
+    if [[ "$valeur" == "usine" ]]; then
+        local tmp; tmp="$(mktemp)"; grep -vE "^$clef=" "$ENV_DEMON" > "$tmp" || true
+        cat "$tmp" > "$ENV_DEMON"; rm -f "$tmp"
+    else
+        if [[ -n "$bornes" ]]; then
+            read -r bas haut <<<"$bornes"
+            [[ "$valeur" =~ ^[0-9]+$ ]] && (( valeur >= bas && valeur <= haut )) || { rouge "$quoi : de $bas à $haut"; exit 1; }
+        else
+            [[ "$valeur" =~ ^[0-9]+([.,][0-9]+)?$ ]] || { rouge "marge : un nombre de mm (0 à 4)"; exit 1; }
+        fi
+        ecrire "$ENV_DEMON" "$clef" "$valeur"
+    fi
+    systemctl restart borne-imprimante
+    vert "$quoi : ${valeur} — le démon repart avec."
 }
 
 cmd_diag() {
@@ -371,11 +404,12 @@ cmd_demon() {
         sonde)     geste_imprimante --sonde ;;
         test)      geste_imprimante --test ;;
         calibrage) geste_imprimante --calibrage ;;
+        essai-noir) geste_imprimante --essai-noir ;;
         debloquer) geste_imprimante --debloquer ;;
         sortie)
             [[ -n "${2:-}" ]] || { rouge "borne demon sortie <standard|manuelle|ejection|rejet>"; exit 1; }
             geste_imprimante --essai-sortie "$2" ;;
-        *) rouge "borne demon <stop|demarre|relance|etat|diag|sonde|test|calibrage|debloquer|sortie X>"; exit 1 ;;
+        *) rouge "borne demon <stop|demarre|relance|etat|diag|reglages|sonde|test|calibrage|essai-noir|debloquer|sortie X>"; exit 1 ;;
     esac
 }
 
@@ -498,10 +532,12 @@ borne — exploitation de la machine du hall
   borne domaine <url>         change l'adresse dans les deux fichiers
 
   borne journal [-f]          les traces des deux services
-  borne demon <...>           stop | demarre | relance | etat | diag | sonde | test | calibrage | debloquer
+  borne demon <...>           stop | demarre | relance | etat | diag | reglages | sonde | test | calibrage | essai-noir | debloquer
   borne demon sortie <nom>    imprime UNE carte marquée par cette sortie, pour voir d'où elle tombe
   borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
   borne sortie-rejet <nom>    fixe celle des cartes ratées
+  borne reglage <quoi> [v]    chauffe et marge du noir : contraste 1-20 | vitesse 1-10 | marge mm
+                              (« usine » rend la main ; essayer avec « borne demon essai-noir »)
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
   borne maj                   git pull puis réinstallation
@@ -527,6 +563,7 @@ case "${1:-aide}" in
     demon)              shift || true; cmd_demon "${1:-etat}" "${2:-}" ;;
     sortie)             shift || true; cmd_sortie EVOLIS_SORTIE "${1:-}" ;;
     sortie-rejet)       shift || true; cmd_sortie EVOLIS_SORTIE_REJET "${1:-}" ;;
+    reglage)            shift || true; cmd_reglage "${1:-}" "${2:-}" ;;
     chrome)             shift || true; cmd_chrome "${1:-}" ;;
     maj)                cmd_maj ;;
     assistance)         shift || true; cmd_assistance "${1:-}" ;;
