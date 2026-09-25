@@ -484,6 +484,17 @@ class Evolis:
                       f"   (réglage démon : {SORTIE or 'imprimante'} / {SORTIE_REJET or 'imprimante'})")
             except Exception:  # noqa: BLE001 — une fiche ne casse pas sur un détail
                 pass
+            try:
+                n = co.get_cleaning_info()
+                if n is not None:
+                    reste = n.warningThreshold - n.cardCount if n.warningThreshold else None
+                    print(f"nettoyage   : {n.cardCount} cartes depuis le dernier (sur {n.totalCardCount} en tout) · "
+                          f"à nettoyer vers {n.warningThreshold}{f', encore ~{reste}' if reste is not None else ''} · "
+                          f"garantie de la tête perdue à {n.warrantyLostThreshold} sans nettoyage · "
+                          f"tête {'sous garantie' if n.printHeadUnderWarranty else 'HORS garantie'} · "
+                          f"{n.regularCleaningCount} nettoyage(s) simple(s), {n.advancedCleaningCount} avancé(s)")
+            except Exception:  # noqa: BLE001 — une fiche ne casse pas sur un détail
+                pass
             if ruban is None:
                 print(f"ruban       : illisible ({co.get_last_error().name}) — pas de ruban, ou puce non lue")
             else:
