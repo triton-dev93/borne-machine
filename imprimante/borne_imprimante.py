@@ -217,6 +217,10 @@ class Evolis:
         # Vu le 25/09 : ruban mal engagé, détendu ou déchiré. L'admin disait « erreur » sans motif.
         "ERR_RIBBON_ERROR": "ruban_erreur",
         "DEF_RIBBON_ERROR": "ruban_erreur",
+        # Vu le 25/09, après deux cartes coincées : les ratées s'empilent dans le bac de rejet, et
+        # l'imprimante refuse tout tant qu'on ne l'a pas vidé.
+        "ERR_REJECT_BOX_FULL": "rejet_plein",
+        "DEF_REJECT_BOX_FULL": "rejet_plein",
         "INF_CLEANING_REQUIRED": "nettoyage",
         "INF_RIBBON_LOW": "ruban_bas",
         "INF_FEEDER_NEAR_EMPTY": "chargeur_presque_vide",
