@@ -169,14 +169,24 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     # Toute l'arborescence, d'avance : la bibliothèque range la configuration de chaque imprimante
     # sous /opt/evolis/etc/printers/, et n'avait pas le droit de la créer (« permission denied »).
     # Le bit setgid (2775) fait hériter le groupe `_evolis` à tout ce qu'elle y créera ensuite.
-    install -d -m 2775 -o root -g _evolis /opt/evolis /opt/evolis/etc /opt/evolis/etc/printers
-    chgrp -R _evolis /opt/evolis && chmod -R g+rwX /opt/evolis
+    install -d -m 2775 -o root -g _evolis /opt/evolis
+    # (Une supposition fausse du 25/09 avait créé /opt/evolis/etc/printers : inutile, retiré.)
+    rm -rf /opt/evolis/etc
     # ⚠ Sans le pilote Evolis installé, son « dossier de configuration » reste VIDE, et la
     # bibliothèque range alors la configuration de l'imprimante à la racine : /etc/printers/
     # (« Could not create folder /etc/printers/: Permission denied », 25/09). C'est là qu'elle
     # prépare l'image de face : sans ce dossier, « Missing front bitmap bundle ». Ni CUPS ni le
     # système ne s'en servent.
     install -d -m 2775 -o root -g _evolis /etc/printers
+    # ⚠⚠ Et /opt/evolis/printers doit être un LIEN vers /etc/printers/ — la bibliothèque le vérifie
+    # (« The link "/opt/evolis/printers/" exists but the target is not "/etc/printers/" »). Lors d'un
+    # essai précédent, elle y avait créé un VRAI dossier, puis refusait. Son contenu rejoint
+    # /etc/printers, et le lien prend sa place.
+    if [[ -d /opt/evolis/printers && ! -L /opt/evolis/printers ]]; then
+        cp -an /opt/evolis/printers/. /etc/printers/ 2>/dev/null || true
+        rm -rf /opt/evolis/printers
+    fi
+    ln -sfn /etc/printers/ /opt/evolis/printers
     chgrp -R _evolis /etc/printers && chmod -R g+rwX /etc/printers
     install -d -m 0750 -o borne-imprimante -g borne-imprimante /var/lib/borne-imprimante
 
