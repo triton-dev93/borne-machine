@@ -297,9 +297,10 @@ cmd_reglage() {
         contraste) clef=EVOLIS_CONTRASTE; bornes="1 20" ;;
         vitesse)   clef=EVOLIS_VITESSE;   bornes="1 10" ;;
         marge)     clef=EVOLIS_MARGE_MM;  bornes="" ;;
+        marge-haut) clef=EVOLIS_MARGE_HAUT_MM; bornes="" ;;
         arrondi)   clef=EVOLIS_ARRONDI_MM; bornes="" ;;
         decalage)  clef=EVOLIS_DECALAGE_MM; bornes="signe" ;;
-        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm|arrondi mm|decalage ±mm> [valeur|usine]"
+        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm|marge-haut mm|arrondi mm|decalage ±mm> [valeur|usine]"
            gris "sans valeur : ce qui est posé ; « usine » : on rend la main à l'imprimante"; exit 1 ;;
     esac
     if [[ -z "$valeur" ]]; then
@@ -541,7 +542,7 @@ borne — exploitation de la machine du hall
   borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
   borne sortie-rejet <nom>    fixe celle des cartes ratées
   borne reglage <quoi> [v]    chauffe et marge du noir : contraste 1-20 | vitesse 1-10 | marge mm
-                              | arrondi mm | decalage ±mm (recule l'image vers le côté qui sort en dernier)
+                              | marge-haut mm (côté qui sort en premier) | arrondi mm | decalage ±mm (recule l'image vers le côté qui sort en dernier)
                               (« usine » rend la main ; essayer avec « borne demon essai-noir »)
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder

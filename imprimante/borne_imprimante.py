@@ -92,6 +92,12 @@ PANNEAU = os.environ.get("EVOLIS_PANNEAU", "image").strip().lower()
 #: ruban, mais se voyait à peine, et disparaissait côté entrée (voir {@see DECALAGE_MM}).
 MARGE_MM = os.environ.get("EVOLIS_MARGE_MM", "2").strip()
 
+#: La marge du côté qui sort EN PREMIER (le haut du dessin). Vide = la même que les autres. Mesuré
+#: le 25/09 : à 2 mm partout, ce côté n'en montrait qu'1 — la tête prend de l'avance sur la carte —
+#: quand les trois autres tombaient juste. On l'élargit plutôt que de décaler tout le dessin : les
+#: trois bords justes le restent.
+MARGE_HAUT_MM = os.environ.get("EVOLIS_MARGE_HAUT_MM", "").strip()
+
 #: Le rayon des coins du noir, en mm. Vide = SUIVRE la carte : un coin ISO fait 3,18 mm, le noir
 #: tourne donc à 3,18 − marge, et le blanc garde la même largeur partout, coins compris.
 ARRONDI_MM = os.environ.get("EVOLIS_ARRONDI_MM", "").strip()
@@ -676,9 +682,11 @@ def _marge(image):
     rayon_mm = _mm(ARRONDI_MM, "EVOLIS_ARRONDI_MM", max(RAYON_CARTE_MM - mm, 0.5))
     rayon = round(max(0.0, rayon_mm) * DPI / 25.4)
 
+    haut = round(max(0.0, min(_mm(MARGE_HAUT_MM, "EVOLIS_MARGE_HAUT_MM", mm), 6.0)) * DPI / 25.4)
+
     l, h = image.size
     garde = Image.new("1", image.size, 0)
-    ImageDraw.Draw(garde).rounded_rectangle((px, px, l - 1 - px, h - 1 - px), radius=rayon, fill=1)
+    ImageDraw.Draw(garde).rounded_rectangle((px, haut, l - 1 - px, h - 1 - px), radius=rayon, fill=1)
     blanc = Image.new("1", image.size, 1)  # 1 = blanc en mode « 1 »
     return Image.composite(image, blanc, garde)
 
@@ -929,7 +937,7 @@ def main() -> int:
 
         if options.essai_noir:
             appareil.imprimer(carte_noire())
-            print(f"Aplat noir envoyé (marge {MARGE_MM or '0'} mm, arrondi {ARRONDI_MM or 'suit la carte'}, décalage {DECALAGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}, vitesse {VITESSE or 'usine'}).")
+            print(f"Aplat noir envoyé (marge {MARGE_MM or '0'} mm, haut {MARGE_HAUT_MM or MARGE_MM or '0'} mm, arrondi {ARRONDI_MM or 'suit la carte'}, décalage {DECALAGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}, vitesse {VITESSE or 'usine'}).")
             return 0
 
         if options.essai_sortie:
@@ -1000,7 +1008,7 @@ def lire_les_reglages() -> int:
         if not session.export_config(str(chemin)):
             print(f"export impossible ({session.get_last_error().name})")
             return 1
-        print(f"posé ici : marge {MARGE_MM or '0'} mm · arrondi {ARRONDI_MM or 'suit la carte'} · décalage {DECALAGE_MM or '0'} mm · contraste {CONTRASTE or 'usine'} · vitesse {VITESSE or 'usine'}")
+        print(f"posé ici : marge {MARGE_MM or '0'} mm · haut {MARGE_HAUT_MM or MARGE_MM or '0'} mm · arrondi {ARRONDI_MM or 'suit la carte'} · décalage {DECALAGE_MM or '0'} mm · contraste {CONTRASTE or 'usine'} · vitesse {VITESSE or 'usine'}")
         cles = ("Monochrome", "Heat", "Black", "Dark", "Speed", "Contrast", "Orientation", "Ribbon", "Resolution")
         for ligne in sorted(chemin.read_text().splitlines()):
             if any(c in ligne.split("=", 1)[0] for c in cles):
