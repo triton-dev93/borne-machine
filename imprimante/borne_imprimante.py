@@ -774,6 +774,7 @@ def main() -> int:
     parseur.add_argument("--calibrage", action="store_true", help="imprimer une carte de repères à mesurer")
     parseur.add_argument("--debloquer", action="store_true", help="effacer une erreur mécanique et éjecter la carte")
     parseur.add_argument("--sonde", action="store_true", help="essayer toutes les façons d'atteindre l'imprimante")
+    parseur.add_argument("--reglages", action="store_true", help="les réglages d'impression en vigueur (noir, chauffe, vitesse)")
     parseur.add_argument("--essai-sortie", metavar="SORTIE", choices=sorted(SORTIES),
                          help="imprimer une carte marquée par cette sortie, pour voir d'où elle tombe")
     parseur.add_argument("-v", "--verbeux", action="store_true")
@@ -786,6 +787,9 @@ def main() -> int:
 
     if options.sonde:
         return sonder()
+
+    if options.reglages:
+        return lire_les_reglages()
 
     try:
         appareil = imprimante()
@@ -875,6 +879,25 @@ def sonder() -> int:
         return 0
     print("\n→ Rien ne répond. Droits sur le nœud (groupe borne-imprimante) ? Imprimante allumée ?")
     return 1
+
+
+def lire_les_reglages() -> int:
+    """Ce qu'une session d'impression sur ruban noir utiliserait : de quoi régler sans deviner."""
+    appareil = imprimante()
+    _, co = appareil._ouvrir(patience=PATIENCE)
+    try:
+        session = appareil.evolis.PrintSession(co, appareil.evolis.RibbonType.KBLACK)
+        chemin = Path(tempfile.gettempdir()) / "borne-reglages.txt"
+        if not session.export_config(str(chemin)):
+            print(f"export impossible ({session.get_last_error().name})")
+            return 1
+        cles = ("Monochrome", "Heat", "Black", "Dark", "Speed", "Contrast", "Orientation", "Ribbon", "Resolution")
+        for ligne in sorted(chemin.read_text().splitlines()):
+            if any(c in ligne.split("=", 1)[0] for c in cles):
+                print(ligne)
+        return 0
+    finally:
+        co.close()
 
 
 def carte_marquee(texte: str) -> Path:

@@ -367,6 +367,7 @@ cmd_demon() {
         relance)   systemctl restart borne-imprimante; vert "Démon relancé." ;;
         etat)      geste_imprimante --etat ;;
         diag)      cmd_diag ;;
+        reglages)  geste_imprimante --reglages ;;
         sonde)     geste_imprimante --sonde ;;
         test)      geste_imprimante --test ;;
         calibrage) geste_imprimante --calibrage ;;
