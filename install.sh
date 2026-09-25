@@ -193,7 +193,12 @@ if [[ -n "$JETON_IMPRESSION" ]]; then
     # Le jeton D'ABORD : si une étape suivante échoue (le SDK, le réseau), il est gardé, et
     # « borne maj » ne le redemande pas — il reprend là où ça a cassé.
     install -d -m 0755 /etc/borne
-    printf 'BORNE_URL=https://%s\nBORNE_JETON_IMPRESSION=%s\n' "$DOMAINE" "$JETON_IMPRESSION" > /etc/borne/imprimante.env
+    # ⚠ Les réglages EVOLIS_* (sorties, marges, chauffe) vivent dans le MÊME fichier : les réécrire
+    # à chaque « borne maj » les effaçait (vu le 25/09 : la marge du haut retombait à 2 mm).
+    reglages=""
+    if [[ -f /etc/borne/imprimante.env ]]; then reglages="$(grep -E '^EVOLIS_[A-Z_]+=' /etc/borne/imprimante.env || true)"; fi
+    { printf 'BORNE_URL=https://%s\nBORNE_JETON_IMPRESSION=%s\n' "$DOMAINE" "$JETON_IMPRESSION"
+      if [[ -n "$reglages" ]]; then printf '%s\n' "$reglages"; fi; } > /etc/borne/imprimante.env
     chown root:borne-imprimante /etc/borne/imprimante.env
     chmod 0640 /etc/borne/imprimante.env
     echo "  jeton d'impression enregistré"
