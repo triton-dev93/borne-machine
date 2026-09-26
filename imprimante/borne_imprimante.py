@@ -365,8 +365,12 @@ class Evolis:
         finally:
             co.close()
 
-    def imprimer(self, png: Path) -> None:
-        """Une carte. Lève {@see ImpressionImpossible} avec un motif que l'écran sait dire."""
+    def imprimer(self, png: Path, sorties: dict | None = None) -> None:
+        """Une carte. Lève {@see ImpressionImpossible} avec un motif que l'écran sait dire.
+
+        `sorties` = le choix de l'administration pour ce travail ({"sortie", "sortie_rejet"}) ; ce
+        qui n'y est pas retombe sur EVOLIS_SORTIE / EVOLIS_SORTIE_REJET.
+        """
         _, co = self._ouvrir(patience=PATIENCE)
         try:
             session = self.evolis.PrintSession(co, getattr(self.evolis.RibbonType, self.RUBAN))
@@ -380,7 +384,8 @@ class Evolis:
                 session.set_setting(self.evolis.SettingKey.Orientation, ORIENTATION)
 
             self._regler_la_chauffe(session)
-            self._regler_les_sorties(co)
+            sorties = sorties or {}
+            self._regler_les_sorties(co, sorties.get("sortie"), sorties.get("sortie_rejet"))
 
             try:
                 self.journal_sdk.write_text("")  # seule cette impression dans le journal
@@ -460,11 +465,11 @@ class Evolis:
             if not session.set_setting(getattr(self.evolis.SettingKey, cle), f"VAL{int(valeur)}"):
                 journal.warning("%s=VAL%s refusé par le pilote", cle, valeur)
 
-    def _regler_les_sorties(self, co, sortie: str | None = None) -> None:
+    def _regler_les_sorties(self, co, sortie: str | None = None, sortie_rejet: str | None = None) -> None:
         """Pose la sortie des cartes réussies et celle des ratées, si elles sont réglées."""
         for nom, poser, quoi in (
             (sortie or SORTIE, co.set_output_tray, "sortie"),
-            (SORTIE_REJET, co.set_error_tray, "sortie des cartes ratées"),
+            (sortie_rejet or SORTIE_REJET, co.set_error_tray, "sortie des cartes ratées"),
         ):
             if not nom:
                 continue
@@ -591,7 +596,7 @@ class EvolisFactice:
             ruban_type="KBLACK", ruban_capacite=2000, ruban_restant=1842,
         )
 
-    def imprimer(self, png: Path) -> None:
+    def imprimer(self, png: Path, sorties: dict | None = None) -> None:
         if self.panne:
             raise ImpressionImpossible(self.panne, "panne simulée")
         cible = self.dossier / f"{int(time.time() * 1000)}-{png.name}"
@@ -845,10 +850,14 @@ class Demon:
                 self.serveur.resultat(identifiant, "echec", deja, "erreur", self.imprimante.etat())
                 return
 
+            # Par où sortent les cartes : l'administration le dit à chaque travail (fiche de la
+            # borne). Un serveur qui ne le dit pas laisse le réglage de la machine.
+            sorties = travail.get("sorties") if isinstance(travail.get("sorties"), dict) else None
+
             faites = deja
             for _ in range(quantite - deja):
                 try:
-                    self.imprimante.imprimer(png)
+                    self.imprimante.imprimer(png, sorties)
                 except ImpressionImpossible as panne:
                     journal.error("travail %s arrêté à %d/%d : %s", identifiant, faites, quantite, panne)
                     # Ce qui est sorti est sorti : on l'accuse, puis on dit ce qui a bloqué.

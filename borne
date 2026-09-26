@@ -557,6 +557,12 @@ AIDE
 
 reparer_politique
 
+# Un service modifié sur le disque sans rechargement de systemd repart avec son ANCIENNE définition
+# (vu le 26/09 : « unit file changed on disk » à chaque geste). On recharge dès qu'il le demande.
+if [[ $EUID -eq 0 && "$(systemctl show borne-imprimante -p NeedDaemonReload --value 2>/dev/null)" == "yes" ]]; then
+    systemctl daemon-reload
+fi
+
 case "${1:-aide}" in
     etat|status)        cmd_etat ;;
     stop|arrete)        shift || true; cmd_stop "${1:-}" ;;
