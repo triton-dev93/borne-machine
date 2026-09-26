@@ -114,6 +114,12 @@ DECALAGE_MM = os.environ.get("EVOLIS_DECALAGE_MM", "").strip()
 CONTRASTE = os.environ.get("EVOLIS_CONTRASTE", "").strip()
 VITESSE = os.environ.get("EVOLIS_VITESSE", "").strip()
 
+#: La mise en veille de l'imprimante, en secondes : « 0 » = JAMAIS (défaut). Une borne de hall ne
+#: doit pas trouver son imprimante endormie quand un client attend sa carte. Vide = on n'y touche
+#: pas. Le démon la vérifie au démarrage puis toutes les heures, et la repose si elle a bougé.
+VEILLE = os.environ.get("EVOLIS_VEILLE_S", "0").strip()
+SECONDES_ENTRE_VEILLES = 3600
+
 #: Combien de secondes un geste d'impression attend une imprimante occupée avant de renoncer.
 PATIENCE = float(os.environ.get("EVOLIS_PATIENCE", "20"))
 
@@ -542,6 +548,10 @@ class Evolis:
             except Exception:  # noqa: BLE001 — une fiche ne casse pas sur un détail
                 pass
             try:
+                print(f"veille      : {_veille(co.get_standby_time())}   (réglage démon : {_veille(int(VEILLE)) if VEILLE.isdigit() else 'imprimante'})")
+            except Exception:  # noqa: BLE001
+                pass
+            try:
                 n = co.get_cleaning_info()
                 if n is not None:
                     # Valeurs BRUTES : le SDK ne documente pas ces champs, on ne les interprète pas.
@@ -561,6 +571,31 @@ class Evolis:
                 # (Vu le 25/09 : ruban RCT223NAAA en 0000 sur une imprimante en E000, imprimant bien.)
                 if info is not None and ruban.zone and info.zone and ruban.zone.strip("0") and ruban.zone != info.zone:
                     print("  ⚠ ZONES DIFFÉRENTES : ce ruban n'est pas vendu pour cette imprimante — à échanger chez le revendeur.")
+        finally:
+            co.close()
+
+    def regler_la_veille(self) -> bool:
+        """Pose la mise en veille voulue ({@see VEILLE}). Vrai si c'est fait (ou rien à faire)."""
+        if not VEILLE:
+            return True
+        try:
+            voulue = int(VEILLE)
+        except ValueError:
+            journal.warning("EVOLIS_VEILLE_S=%r illisible : veille laissée telle quelle", VEILLE)
+            return True
+        try:
+            _, co = self._ouvrir(patience=0)
+        except ImpressionImpossible:
+            return False  # éteinte ou occupée : on réessaiera
+        try:
+            actuelle = co.get_standby_time()
+            if actuelle == voulue:
+                return True
+            if not co.set_standby_time(voulue):
+                journal.warning("veille : réglage refusé (%s)", co.get_last_error().name)
+                return False
+            journal.info("veille : %s → %s", _veille(actuelle), _veille(voulue))
+            return True
         finally:
             co.close()
 
@@ -660,6 +695,12 @@ def rasteriser(pdf: bytes, travail: Path, bordure: bool = True) -> Path:
         image.save(pret, "PNG", bits=1, optimize=True)
 
     return pret
+
+
+def _veille(secondes: int) -> str:
+    if secondes is None or secondes < 0:
+        return "illisible"
+    return "jamais" if secondes == 0 else f"après {secondes // 60} min" if secondes >= 60 else f"après {secondes} s"
 
 
 def _proche(taille: tuple[int, int], attendu: tuple[int, int]) -> bool:
@@ -799,6 +840,7 @@ class Demon:
         self.imprimante = imprimante
         self.vivant = True
         self.dernier_etat = 0.0
+        self.derniere_veille = None
         self.travaux = dossier_de_travail()
 
     def arreter(self, *_) -> None:
@@ -830,6 +872,11 @@ class Demon:
             return
         self.serveur.etat(self.imprimante.etat())
         self.dernier_etat = time.monotonic()
+
+        regler = getattr(self.imprimante, "regler_la_veille", None)
+        if regler and (self.derniere_veille is None or self.dernier_etat - self.derniere_veille >= SECONDES_ENTRE_VEILLES):
+            if regler():
+                self.derniere_veille = self.dernier_etat
 
     def faire(self, travail: dict) -> None:
         identifiant = travail["id"]

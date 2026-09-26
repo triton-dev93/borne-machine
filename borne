@@ -298,15 +298,24 @@ cmd_reglage() {
         vitesse)   clef=EVOLIS_VITESSE;   bornes="1 10" ;;
         marge)     clef=EVOLIS_MARGE_MM;  bornes="" ;;
         marge-haut) clef=EVOLIS_MARGE_HAUT_MM; bornes="" ;;
+        veille)
+            clef=EVOLIS_VEILLE_S; bornes="1 1440"
+            # En MINUTES pour l'humain, en secondes pour le démon ; « jamais » = pas de veille.
+            if [[ "$valeur" == "jamais" ]]; then valeur=0; bornes=""
+            elif [[ "$valeur" =~ ^[0-9]+$ ]] && (( valeur >= 1 && valeur <= 1440 )); then valeur=$(( valeur * 60 )); bornes=""
+            fi ;;
         arrondi)   clef=EVOLIS_ARRONDI_MM; bornes="" ;;
         decalage)  clef=EVOLIS_DECALAGE_MM; bornes="signe" ;;
-        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm|marge-haut mm|arrondi mm|decalage ±mm> [valeur|usine]"
+        *) rouge "borne reglage <contraste 1-20|vitesse 1-10|marge mm|marge-haut mm|arrondi mm|decalage ±mm|veille minutes|jamais> [valeur|usine]"
            gris "sans valeur : ce qui est posé ; « usine » : on rend la main à l'imprimante"; exit 1 ;;
     esac
     if [[ -z "$valeur" ]]; then
         grep -E "^$clef=" "$ENV_DEMON" || gris "$clef non posé (réglage par défaut)"; return
     fi
-    if [[ "$valeur" == "usine" ]]; then
+    if [[ "$valeur" == "usine" && "$quoi" == "veille" ]]; then
+        # Sans la clé, le démon imposerait « jamais » (son défaut) : vide = il n'y touche plus.
+        ecrire "$ENV_DEMON" "$clef" ""
+    elif [[ "$valeur" == "usine" ]]; then
         local tmp; tmp="$(mktemp)"; grep -vE "^$clef=" "$ENV_DEMON" > "$tmp" || true
         cat "$tmp" > "$ENV_DEMON"; rm -f "$tmp"
     else
@@ -542,7 +551,8 @@ borne — exploitation de la machine du hall
   borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
   borne sortie-rejet <nom>    fixe celle des cartes ratées
   borne reglage <quoi> [v]    chauffe et marge du noir : contraste 1-20 | vitesse 1-10 | marge mm
-                              | marge-haut mm (côté qui sort en premier) | arrondi mm | decalage ±mm (recule l'image vers le côté qui sort en dernier)
+                              | marge-haut mm (côté qui sort en premier) | arrondi mm | decalage ±mm
+                              | veille <minutes|jamais> (jamais par défaut) (recule l'image vers le côté qui sort en dernier)
                               (« usine » rend la main ; essayer avec « borne demon essai-noir »)
                               (test, calibrage et debloquer suspendent le démon le temps du geste)
   borne chrome [--outils]     une fenêtre normale sur la borne, pour regarder
