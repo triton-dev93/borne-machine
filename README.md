@@ -54,7 +54,10 @@ lecture, et se révoque seule.
 | Chrome | relancé automatiquement s'il se ferme |
 | Politiques Chrome | liste blanche d'URL, pas d'outils de développement, **pas d'enregistrement de carte** |
 | Tailscale | inscrit avec une clé **taguée** |
-| Redémarrage nocturne | 5 h du matin |
+| Relance nocturne du kiosque | 5 h du matin — Chrome seul, **plus la machine** (gels des 08 et 09/10) |
+| Noyau | épinglé sur `7.0.0-34-generic`, noyaux suivants retenus (`BORNE_NOYAU=auto borne maj` pour rendre la main) |
+| Services de bureau inutiles | apport, insights, indexation, notifications : coupés |
+| Réseau | le câble ; le Wi-Fi ne se reconnecte plus tout seul quand le câble porte la borne |
 | Imprimante à cartes | démon `borne-imprimante`, venv dédié, règle udev, utilisateur système |
 | Caméra | autorisée d'avance pour le seul domaine de la borne (voie rapide : lire la carte de membre) |
 
@@ -92,7 +95,7 @@ borne maj                   # git pull puis réinstallation
 **Pourquoi `borne stop` compte.** Le service du kiosque porte `Restart=always` : fermer la fenêtre
 la fait revenir deux secondes plus tard, ce qui est la moitié de la robustesse d'une borne — et
 insupportable quand on cherche une panne. `borne stop` la coupe pour de bon. Elle revient au
-redémarrage nocturne de 5 h, donc un arrêt oublié un soir se répare seul avant l'ouverture.
+la relance nocturne de 5 h, donc un arrêt oublié un soir se répare seul avant l'ouverture.
 
 **Les jetons ne s'affichent jamais.** `borne etat` en donne l'empreinte `sha256` sur douze
 caractères, qu'on compare à celle de l'administration, et qui se lit à voix haute au téléphone sans
@@ -112,7 +115,7 @@ service tombe sans rien dire ; la commande les repose correctement.
 ## Mettre à jour
 
 Rien à faire. La borne est une page web : un déploiement du site la met à jour au rechargement
-suivant, c'est-à-dire au redémarrage nocturne. Ce dépôt ne sert qu'à l'installation et aux réglages
+suivant, c'est-à-dire à la relance nocturne. Ce dépôt ne sert qu'à l'installation et aux réglages
 de la machine.
 
 

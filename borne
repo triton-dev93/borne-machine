@@ -134,11 +134,17 @@ cmd_stop() {
     fi
     uctl stop borne 2>/dev/null || true
     vert "Kiosque arrêté — il ne redémarrera pas tout seul."
-    gris "Il reviendra au redémarrage nocturne de 5 h, ou avec « borne demarre »."
+    gris "Il reviendra à la relance nocturne de 5 h, ou avec « borne demarre »."
 }
 
 cmd_demarre() { uctl start borne;   vert "Kiosque démarré."; }
 cmd_relance() { uctl restart borne; vert "Kiosque relancé."; }
+# Redémarrer la MACHINE — pour prendre un noyau, un réglage du démarrage. À distance, c'était
+# impossible sans le mot de passe du compte : seule cette commande est permise sans lui.
+cmd_redemarre() {
+    jaune "La machine redémarre : la borne revient d'elle-même dans deux minutes environ."
+    systemctl reboot
+}
 
 cmd_jeton() {
     demander_jeton 'Nouveau jeton d ÉCRAN : '
@@ -540,6 +546,7 @@ borne — exploitation de la machine du hall
   borne stop [tout]           coupe le kiosque (et le démon avec « tout »)
   borne demarre               le rallume
   borne relance               l'un puis l'autre
+  borne redemarre             redémarre la MACHINE (noyau, réglages du démarrage)
 
   borne jeton                 change le jeton d'ÉCRAN, relance, et VÉRIFIE
   borne jeton-impression      pose celui du démon Evolis (et l'installe s'il manque)
@@ -578,6 +585,7 @@ case "${1:-aide}" in
     stop|arrete)        shift || true; cmd_stop "${1:-}" ;;
     demarre|start)      cmd_demarre ;;
     relance|restart)    cmd_relance ;;
+    redemarre|reboot)   cmd_redemarre ;;
     jeton)              cmd_jeton ;;
     jeton-impression)   cmd_jeton_impression ;;
     domaine)            shift || true; cmd_domaine "${1:-}" ;;

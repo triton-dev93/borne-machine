@@ -251,27 +251,115 @@ else
     echo "  (Tailscale ignoré — la borne joindra le site par l'internet public)"
 fi
 
-# ── Redémarrage nocturne ─────────────────────────────────────────────────────
-# État propre, jeton relu, mises à jour appliquées hors des heures d'ouverture.
-dire "Redémarrage nocturne"
-cat > /etc/systemd/system/borne-redemarrage.timer <<'TIMER'
+# ── Nuit : relancer le kiosque, PAS la machine ───────────────────────────────
+# Jusqu'au 09/10, la machine redémarrait entière à 5 h. Au réveil, Ubuntu rattrapait d'un coup ses
+# tâches du jour (man-db, apport, insights…) pendant que GNOME et Chrome démarraient : sur 3,2 Go,
+# la borne s'enlisait dans le swap et GELAIT — deux matins de suite (08 et 09/10), écran noir et
+# « Out of memory », jusqu'à ce que quelqu'un passe. La mémoire, elle, allait bien avant le
+# redémarrage (25 % à 5 h) : relancer Chrome suffit à repartir propre, sans réveiller tout le reste.
+dire "Relance nocturne du kiosque"
+if [[ -f /etc/systemd/system/borne-redemarrage.timer ]]; then
+    systemctl disable --now borne-redemarrage.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/borne-redemarrage.timer /etc/systemd/system/borne-redemarrage.service
+fi
+cat > /etc/systemd/system/borne-relance-nocturne.timer <<'TIMER'
 [Unit]
-Description=Redémarrage nocturne de la borne
+Description=Relance nocturne du kiosque de la borne
 [Timer]
 OnCalendar=*-*-* 05:00:00
 Persistent=false
 [Install]
 WantedBy=timers.target
 TIMER
-cat > /etc/systemd/system/borne-redemarrage.service <<'SERVICE'
+cat > /etc/systemd/system/borne-relance-nocturne.service <<'SERVICE'
 [Unit]
-Description=Redémarrage nocturne de la borne
+Description=Relance nocturne du kiosque de la borne
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/shutdown -r now
+ExecStart=/usr/local/bin/borne relance
 SERVICE
 systemctl daemon-reload
-systemctl enable --now borne-redemarrage.timer >/dev/null
+systemctl enable --now borne-relance-nocturne.timer >/dev/null
+
+# ── Le noyau : épinglé sur celui qui marche ─────────────────────────────────
+# Le 7.0.0-38, posé par les mises à jour automatiques le 07/10, a coïncidé avec les deux gels du
+# matin ET avec un écran de connexion qui s'ouvre une minute après la session automatique (un
+# second GNOME Shell, des centaines de Mo, et un mot de passe à taper sur place). Le 7.0.0-34 a
+# tourné sans faute du 30/09 au 07/10. On démarre sur lui, et on retient les noyaux suivants.
+# « BORNE_NOYAU=auto borne maj » rend la main au noyau le plus récent.
+dire "Noyau"
+install -d -m 0755 /etc/borne
+NOYAU="${BORNE_NOYAU:-$(cat /etc/borne/noyau 2>/dev/null || echo 7.0.0-34-generic)}"
+METAS="$(dpkg-query -W -f='${Package} ${Status}\n' 'linux-generic*' 'linux-image-generic*' 'linux-headers-generic*' 2>/dev/null | awk '/install ok installed/{print $1}' | tr '\n' ' ')"
+if [[ "$NOYAU" == "auto" ]]; then
+    rm -f /etc/borne/noyau
+    [[ -n "$METAS" ]] && apt-mark unhold $METAS >/dev/null
+    sed -i 's|^GRUB_DEFAULT=.*|GRUB_DEFAULT=0|' /etc/default/grub
+    update-grub >/dev/null 2>&1
+    echo "  noyau le plus récent, mises à jour du noyau rouvertes"
+elif [[ -e "/boot/vmlinuz-$NOYAU" ]]; then
+    printf '%s\n' "$NOYAU" > /etc/borne/noyau
+    # Retenir les MÉTA-paquets suffit : sans eux, aucun nouveau noyau n'arrive. Et marquer celui-ci
+    # « manuel » : un `autoremove` l'aurait emporté comme un ancien noyau sans usage.
+    [[ -n "$METAS" ]] && apt-mark hold $METAS >/dev/null
+    apt-mark manual "linux-image-$NOYAU" "linux-modules-$NOYAU" >/dev/null 2>&1 || true
+    sous_menu="$(awk -F"'" '/^submenu /{print $2; exit}' /boot/grub/grub.cfg)"
+    entree="$(awk -F"'" -v n="$NOYAU" '/^[[:space:]]+menuentry / && index($2, n) && $2 !~ /recovery/ {print $2; exit}' /boot/grub/grub.cfg)"
+    if [[ -n "$sous_menu" && -n "$entree" ]]; then
+        sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"$sous_menu>$entree\"|" /etc/default/grub
+        update-grub >/dev/null 2>&1
+        echo "  démarrage sur $NOYAU (au prochain redémarrage) ; noyaux retenus : $METAS"
+    else
+        echo "  entrée GRUB introuvable pour $NOYAU : rien changé au démarrage"
+    fi
+else
+    echo "  $NOYAU absent de /boot : on garde le noyau par défaut"
+fi
+
+# ── Alléger : rien ne doit tourner que la borne ─────────────────────────────
+# 3,2 Go de mémoire : chaque démon de bureau compte. Rapports de plantage, collecte « insights »,
+# indexation des fichiers, notifications de mises à jour, alarmes d'agenda — rien de cela ne sert
+# à un écran public, et tout cela démarrait avec la session.
+dire "Services inutiles à une borne"
+for u in apport.service apport-autoreport.path apport-autoreport.timer apport-forward.socket whoopsie.path; do
+    systemctl disable --now "$u" >/dev/null 2>&1 || true
+done
+for u in ubuntu-insights-collect.timer ubuntu-insights-upload.timer; do
+    systemctl --global disable "$u" >/dev/null 2>&1 || true
+    sudo -u "$UTILISATEUR" XDG_RUNTIME_DIR="/run/user/$(id -u "$UTILISATEUR")" systemctl --user disable --now "$u" >/dev/null 2>&1 || true
+done
+# Les lancements automatiques de la session : masqués pour ce seul utilisateur (un fichier du même
+# nom dans ~/.config/autostart, `Hidden=true`), sans toucher au système.
+for a in update-notifier ubuntu-advantage-notification ubuntu-report-on-upgrade snap-userd-autostart \
+         org.gnome.Evolution-alarm-notify org.gnome.SettingsDaemon.DiskUtilityNotify localsearch-3 \
+         geoclue-demo-agent orca-autostart; do
+    [[ -f "/etc/xdg/autostart/$a.desktop" ]] || continue
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n' "$a" > "$MAISON/.config/autostart/$a.desktop"
+    chown "$UTILISATEUR:$UTILISATEUR" "$MAISON/.config/autostart/$a.desktop"
+done
+echo "  rapports de plantage, insights, indexation et notifications coupés"
+
+# ── Réseau : le câble ───────────────────────────────────────────────────────
+# Le 09/10, la borne vivait sur le Wi-Fi sans que personne le sache ; le Wi-Fi coupé (blocage
+# logiciel), elle a disparu du réseau alors que le câble était branché — sans connexion active.
+# Quand le câble porte la borne, le Wi-Fi ne se reconnecte plus de lui-même : un seul chemin, connu.
+dire "Réseau"
+if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -q '^ethernet:connected'; then
+    # ⚠ `if` et non `[[ … ]] && …` : sous `set -e` + `pipefail`, une boucle dont le dernier tour
+    # finit sur un test faux fait échouer le tube — et l'installation s'arrêterait là.
+    nmcli -t -f NAME,TYPE connection show 2>/dev/null | while IFS=: read -r nom type; do
+        if [[ "$type" == "802-11-wireless" ]]; then
+            nmcli connection modify "$nom" connection.autoconnect no
+            echo "  Wi-Fi « $nom » : plus de connexion automatique"
+        fi
+    done
+    nmcli -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null | awk -F: '$2=="802-3-ethernet"{print $1}' | while read -r nom; do
+        nmcli connection modify "$nom" connection.autoconnect yes connection.autoconnect-priority 10
+    done
+    echo "  câble actif : c'est lui qui porte la borne"
+else
+    echo "  pas de câble actif : réglages Wi-Fi laissés tels quels"
+fi
 
 dire "Installé."
 cat <<FIN
