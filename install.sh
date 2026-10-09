@@ -311,7 +311,7 @@ systemctl enable --now borne-relance-nocturne.timer >/dev/null
 dire "Noyau"
 install -d -m 0755 /etc/borne
 NOYAU="${BORNE_NOYAU:-$(cat /etc/borne/noyau 2>/dev/null || echo 7.0.0-34-generic)}"
-METAS="$(dpkg-query -W -f='${Package} ${Status}\n' 'linux-generic*' 'linux-image-generic*' 'linux-headers-generic*' 2>/dev/null | awk '/install ok installed/{print $1}' | tr '\n' ' ')"
+METAS="$(dpkg-query -W -f='${Package} ${Status}\n' 'linux-generic*' 'linux-image-generic*' 'linux-headers-generic*' 2>/dev/null | awk '/ ok installed$/{print $1}' | tr '\n' ' ')"
 if [[ "$NOYAU" == "auto" ]]; then
     rm -f /etc/borne/noyau
     [[ -n "$METAS" ]] && apt-mark unhold $METAS >/dev/null
@@ -320,7 +320,9 @@ if [[ "$NOYAU" == "auto" ]]; then
     echo "  noyau le plus récent, mises à jour du noyau rouvertes"
 elif [[ -e "/boot/vmlinuz-$NOYAU" ]]; then
     printf '%s\n' "$NOYAU" > /etc/borne/noyau
-    # Retenir les MÉTA-paquets suffit : sans eux, aucun nouveau noyau n'arrive. Et marquer celui-ci
+    # Retenir les MÉTA-paquets suffit : sans eux, aucun nouveau noyau n'arrive. (Un paquet retenu a
+    # le statut « hold ok installed » : chercher « install ok installed » ne les voyait plus au
+    # second passage, et « auto » n'aurait rien rendu.) Et marquer celui-ci
     # « manuel » : un `autoremove` l'aurait emporté comme un ancien noyau sans usage.
     [[ -n "$METAS" ]] && apt-mark hold $METAS >/dev/null
     apt-mark manual "linux-image-$NOYAU" "linux-modules-$NOYAU" >/dev/null 2>&1 || true
