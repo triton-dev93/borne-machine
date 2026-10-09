@@ -48,7 +48,7 @@ lecture, et se révoque seule.
 
 | | |
 |---|---|
-| Utilisateur `borne` | non privilégié, session `gnome-kiosk` |
+| Utilisateur `borne` | non privilégié, session `gnome-kiosk-script-wayland` (et non le bureau `ubuntu`, ouvert par erreur jusqu'au 09/10) |
 | Ouverture de session automatique | GDM, sans mot de passe |
 | Veille, extinction, verrouillage | coupés — **par gsettings, pas par `xset`** (voir plus bas) |
 | Chrome | relancé automatiquement s'il se ferme |

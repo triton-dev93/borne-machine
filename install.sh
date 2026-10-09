@@ -93,11 +93,32 @@ else
     printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$UTILISATEUR" > /etc/gdm3/custom.conf
 fi
 # La session choisie au prochain démarrage : le kiosque, pas le bureau.
+#
+# ⚠⚠ Le nom est `gnome-kiosk-script-wayland`, celui du fichier dans /usr/share/wayland-sessions. On
+# avait écrit `gnome-kiosk`, qui n'existe pas : GDM retombait EN SILENCE sur la session `ubuntu` —
+# le bureau complet, dock, notifications, indexation, verrouillage — et la borne a tourné ainsi du
+# premier jour au 09/10, sur 3,2 Go. Si le nom manque, on le dit au lieu de se taire.
+SESSION=gnome-kiosk-script-wayland
+[[ -f "/usr/share/wayland-sessions/$SESSION.desktop" ]] || echo "  ⚠ session $SESSION absente : GDM ouvrira le bureau complet"
 install -d -m 0700 -o "$UTILISATEUR" -g "$UTILISATEUR" "$MAISON/.config"
-printf '[Desktop]\nSession=gnome-kiosk\n' > "$MAISON/.dmrc"
+printf '[Desktop]\nSession=%s\n' "$SESSION" > "$MAISON/.dmrc"
 chown "$UTILISATEUR:$UTILISATEUR" "$MAISON/.dmrc"
 install -d -m 0755 /var/lib/AccountsService/users
-printf '[User]\nSession=gnome-kiosk\nXSession=gnome-kiosk\nSystemAccount=false\n' > "/var/lib/AccountsService/users/$UTILISATEUR"
+printf '[User]\nSession=%s\nXSession=%s\nSystemAccount=false\n' "$SESSION" "$SESSION" > "/var/lib/AccountsService/users/$UTILISATEUR"
+# Cette session lance ~/.local/bin/gnome-kiosk-script et dure ce qu'il dure ; absent, elle en écrit
+# un qui ouvre… un éditeur de texte. Le nôtre ne lance pas Chrome lui-même : c'est `borne.service`
+# qui le fait et le relance (`borne relance`, `borne stop` en dépendent). Le script donne au
+# gestionnaire de services l'affichage Wayland, démarre le kiosque, puis tient la session ouverte.
+install -d -m 0755 -o "$UTILISATEUR" -g "$UTILISATEUR" "$MAISON/.local" "$MAISON/.local/bin"
+cat > "$MAISON/.local/bin/gnome-kiosk-script" <<'SCRIPT'
+#!/bin/sh
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP 2>/dev/null
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP 2>/dev/null
+systemctl --user start borne.service
+exec sleep infinity
+SCRIPT
+chown "$UTILISATEUR:$UTILISATEUR" "$MAISON/.local/bin/gnome-kiosk-script"
+chmod 0755 "$MAISON/.local/bin/gnome-kiosk-script"
 
 # ── Le jeton ─────────────────────────────────────────────────────────────────
 dire "Jeton"
