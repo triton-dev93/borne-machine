@@ -20,6 +20,11 @@ exec google-chrome-stable \
     --disable-session-crashed-bubble \
     --disable-infobars \
     --disable-features=TranslateUI \
+    `# Pas de zoom au doigt : la page dit « user-scalable=no », mais Chrome sur ordinateur l'ignore —` \
+    `# le pincement s'y règle dans le navigateur, pas dans la page (10/10). Ni de glissé de bord en` \
+    `# « page précédente », qui ferait sortir de la borne.` \
+    --disable-pinch \
+    --overscroll-history-navigation=0 \
     --check-for-update-interval=31536000 \
     --password-store=basic \
     --ozone-platform-hint=auto \
