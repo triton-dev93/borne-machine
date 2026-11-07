@@ -468,8 +468,14 @@ class Evolis:
             if not valeur.isdigit() or int(valeur) not in plage:
                 journal.warning("%s=%r hors de %d–%d : réglage de l'imprimante gardé", cle, valeur, plage[0], plage[-1])
                 continue
-            if not session.set_setting(getattr(self.evolis.SettingKey, cle), f"VAL{int(valeur)}"):
-                journal.warning("%s=VAL%s refusé par le pilote", cle, valeur)
+            # ⚠ Ces clés sont des ENTIERS pour le SDK (« Type: INT ») : la forme « VAL8 », celle que
+            # montre `export_config`, était refusée — le contraste n'a jamais été posé avant le
+            # 07/11, et le ruban cassait toujours à la chauffe d'usine. Le texte reste en repli.
+            clef, n = getattr(self.evolis.SettingKey, cle), int(valeur)
+            if not (session.set_int_setting(clef, n) or session.set_setting(clef, str(n)) or session.set_setting(clef, f"VAL{n}")):
+                journal.warning("%s=%s refusé par le pilote", cle, valeur)
+                continue
+            journal.warning("%s posé : %s", cle, session.get_setting(clef))
 
     def _regler_les_sorties(self, co, sortie: str | None = None, sortie_rejet: str | None = None) -> None:
         """Pose la sortie des cartes réussies et celle des ratées, si elles sont réglées."""
