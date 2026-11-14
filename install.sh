@@ -299,8 +299,32 @@ Description=Relance nocturne du kiosque de la borne
 Type=oneshot
 ExecStart=/usr/local/bin/borne relance
 SERVICE
+
+# ── Avant les portes : une seconde relance, qui attend que personne ne touche ──
+# Les samedis 07 et 14/11 vers 20 h 17, la page chargée à 5 h ne recevait plus aucun toucher, alors
+# que tout le reste vivait ; relancer Chrome guérissait. Tant que la cause n'est pas trouvée, la
+# soirée démarre sur une page neuve. « relance-douce » attend 3 min sans doigt sur la dalle : elle
+# ne coupe pas quelqu'un en plein paiement.
+cat > /etc/systemd/system/borne-relance-soir.timer <<'TIMER'
+[Unit]
+Description=Relance du kiosque de la borne avant l'ouverture des portes
+[Timer]
+OnCalendar=*-*-* 17:30:00
+Persistent=false
+[Install]
+WantedBy=timers.target
+TIMER
+cat > /etc/systemd/system/borne-relance-soir.service <<'SERVICE'
+[Unit]
+Description=Relance du kiosque de la borne avant l'ouverture des portes
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/borne relance-douce
+TimeoutStartSec=75min
+SERVICE
 systemctl daemon-reload
 systemctl enable --now borne-relance-nocturne.timer >/dev/null
+systemctl enable --now borne-relance-soir.timer >/dev/null
 
 # ── Le noyau : épinglé sur celui qui marche ─────────────────────────────────
 # Le 7.0.0-38, posé par les mises à jour automatiques le 07/10, a coïncidé avec les deux gels du
