@@ -526,7 +526,17 @@ cmd_demon() {
         sortie)
             [[ -n "${2:-}" ]] || { rouge "borne demon sortie <standard|manuelle|ejection|rejet>"; exit 1; }
             geste_imprimante --essai-sortie "$2" ;;
-        *) rouge "borne demon <stop|demarre|relance|etat|diag|reglages|sonde|test|calibrage|essai-noir|debloquer|sortie X>"; exit 1 ;;
+        fichier)
+            # Un PDF imprimé comme une vraie carte : l'essai d'un nouveau gabarit. « - » le lit sur
+            # l'entrée standard, pour l'envoyer à distance : ssh … 'sudo borne demon fichier -' < carte.pdf
+            [[ -n "${2:-}" ]] || { rouge "borne demon fichier <chemin.pdf | ->"; exit 1; }
+            local copie
+            copie="$(mktemp /tmp/borne-essai-XXXXXX.pdf)"
+            if [[ "$2" == "-" ]]; then cat > "$copie"; else cp -- "$2" "$copie" || { rm -f "$copie"; exit 1; }; fi
+            chmod 0644 "$copie"
+            geste_imprimante --fichier "$copie" || { rm -f "$copie"; exit 1; }
+            rm -f "$copie" ;;
+        *) rouge "borne demon <stop|demarre|relance|etat|diag|reglages|sonde|test|calibrage|essai-noir|debloquer|sortie X|fichier PDF>"; exit 1 ;;
     esac
 }
 
@@ -654,6 +664,7 @@ borne — exploitation de la machine du hall
   borne journal [-f]          les traces des deux services
   borne demon <...>           stop | demarre | relance | etat | diag | reglages | sonde | test | calibrage | essai-noir | debloquer
   borne demon sortie <nom>    imprime UNE carte marquée par cette sortie, pour voir d'où elle tombe
+  borne demon fichier <pdf|-> imprime ce PDF comme une vraie carte (essai d'un gabarit ; « - » = entrée standard)
   borne sortie <nom>          fixe la sortie des cartes (standard | manuelle | ejection | rejet)
   borne sortie-rejet <nom>    fixe celle des cartes ratées
   borne reglage <quoi> [v]    chauffe et marge du noir : contraste 1-20 | vitesse 1-10 | marge mm

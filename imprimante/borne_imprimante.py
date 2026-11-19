@@ -953,6 +953,8 @@ def main() -> int:
                          help="imprimer un aplat noir plein (marge et chauffe en vigueur) : le pire cas du ruban")
     parseur.add_argument("--essai-sortie", metavar="SORTIE", choices=sorted(SORTIES),
                          help="imprimer une carte marquée par cette sortie, pour voir d'où elle tombe")
+    parseur.add_argument("--fichier", metavar="PDF",
+                         help="imprimer ce PDF comme une vraie carte (rasterisé et bordé de même) : l'essai d'un nouveau gabarit")
     parseur.add_argument("-v", "--verbeux", action="store_true")
     options = parseur.parse_args()
 
@@ -1006,6 +1008,9 @@ def main() -> int:
 
         if options.essai_sortie:
             return essai_de_sortie(appareil, options.essai_sortie)
+
+        if options.fichier:
+            return imprimer_un_fichier(appareil, Path(options.fichier))
     except ImpressionImpossible as panne:
         print(f"imprimante : {panne.motif} — {panne}")
         return 1
@@ -1103,6 +1108,25 @@ def carte_marquee(texte: str) -> Path:
     with Image.open(png) as image:
         _fond_perdu(image.convert("1")).save(png, "PNG", bits=1)
     return png
+
+
+def imprimer_un_fichier(appareil, pdf: Path) -> int:
+    """Un PDF imprimé EXACTEMENT comme un travail du serveur : même rasterisation, même cadre blanc,
+    mêmes réglages. Pour essayer un nouveau gabarit (la carte d'un Album Live Collector, 19/11) sur
+    la vraie imprimante sans que le serveur sache le servir."""
+    try:
+        contenu = pdf.read_bytes()
+    except OSError as erreur:
+        print(f"fichier illisible : {erreur}")
+        return 1
+    if not contenu.startswith(b"%PDF"):
+        print("ce n'est pas un PDF")
+        return 1
+    with tempfile.TemporaryDirectory() as dossier:
+        png = rasteriser(contenu, Path(dossier), bordure=True)
+        appareil.imprimer(png)
+    print(f"« {pdf.name} » imprimé comme une carte (marge {MARGE_MM or '0'} mm, contraste {CONTRASTE or 'usine'}).")
+    return 0
 
 
 def essai_de_sortie(appareil, sortie: str) -> int:
