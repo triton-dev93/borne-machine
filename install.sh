@@ -363,6 +363,54 @@ else
     echo "  $NOYAU absent de /boot : on garde le noyau par défaut"
 fi
 
+# ── Gel complet : le chien de garde redémarre la machine ────────────────────
+# Le 20/11 vers 16 h 22, la machine entière s'est figée : écran arrêté, dalle morte, plus de réseau
+# ni de Tailscale. Rien à faire à distance ; elle est restée morte plus d'une heure, jusqu'à ce que
+# quelqu'un appuie longuement sur le bouton. Le journal s'arrêtait net, sans un message : il
+# n'écrivait sur le disque que toutes les 5 minutes.
+#
+# Trois gardes :
+#   • le chien de garde MATÉRIEL de la carte mère (Intel TCO). systemd le nourrit chaque minute ;
+#     s'il cesse (noyau figé), la puce redémarre la machine seule. Ubuntu met `iTCO_wdt` en liste
+#     noire : la liste noire ne bloque que le chargement par alias, on le charge par son nom ;
+#   • un noyau qui se sait bloqué (verrou, processeur accaparé) part en PANIQUE au lieu de rester
+#     figé, et la panique redémarre en 10 s. Le message de panique est gardé dans la mémoire du
+#     microprogramme (efi_pstore) et recopié au démarrage suivant dans /var/lib/systemd/pstore ;
+#   • le journal écrit toutes les 30 s : les dernières minutes avant un gel ne sont plus perdues.
+# `borne gels` montre les démarrages, ceux qui se sont terminés net, et ce que la panique a laissé.
+dire "Chien de garde (gel complet)"
+printf 'iTCO_wdt\n' > /etc/modules-load.d/borne-chien-de-garde.conf
+modprobe iTCO_wdt 2>/dev/null || true
+if [[ -e /dev/watchdog0 ]]; then
+    mkdir -p /etc/systemd/system.conf.d
+    cat > /etc/systemd/system.conf.d/borne-chien-de-garde.conf <<'GARDE'
+[Manager]
+RuntimeWatchdogSec=60s
+RebootWatchdogSec=2min
+GARDE
+    # `daemon-reexec` : le gestionnaire relit sa configuration sans rien arrêter. Le kiosque et le
+    # démon ne sont pas touchés.
+    systemctl daemon-reexec
+    echo "  chien de garde : $(cat /sys/class/watchdog/watchdog0/identity 2>/dev/null || echo watchdog0), redémarre après 60 s de gel"
+else
+    rm -f /etc/systemd/system.conf.d/borne-chien-de-garde.conf
+    echo "  ⚠ aucun chien de garde matériel (iTCO_wdt refusé par le BIOS ?) : seule la panique du noyau protège"
+fi
+cat > /etc/sysctl.d/60-borne-gel.conf <<'SYSCTL'
+# Borne : un noyau bloqué redémarre au lieu de rester figé (voir install.sh, « Chien de garde »).
+kernel.softlockup_panic = 1
+kernel.hardlockup_panic = 1
+kernel.panic = 10
+SYSCTL
+sysctl -q -p /etc/sysctl.d/60-borne-gel.conf
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/borne.conf <<'JOURNAL'
+[Journal]
+SyncIntervalSec=30s
+JOURNAL
+systemctl restart systemd-journald
+echo "  panique → redémarrage en 10 s ; journal écrit toutes les 30 s"
+
 # ── Alléger : rien ne doit tourner que la borne ─────────────────────────────
 # 3,2 Go de mémoire : chaque démon de bureau compte. Rapports de plantage, collecte « insights »,
 # indexation des fichiers, notifications de mises à jour, alarmes d'agenda — rien de cela ne sert

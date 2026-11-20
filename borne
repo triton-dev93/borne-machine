@@ -645,6 +645,46 @@ cmd_maj() {
     vert "À jour."
 }
 
+# Un démarrage qui s'est terminé PROPREMENT finit par « Journal stopped » (arrêt ou redémarrage
+# demandé). Tout autre fin = coupé net : gel, chien de garde, coupure de courant, bouton tenu.
+cmd_gels() {
+    gras "Chien de garde"
+    local usec
+    usec="$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || echo 0)"
+    if [[ -e /dev/watchdog0 && "$usec" != "0" && "$usec" != "infinity" ]]; then
+        vert "$(cat /sys/class/watchdog/watchdog0/identity 2>/dev/null || echo watchdog0) — redémarre après $usec de gel"
+    else
+        rouge "inactif (pas de /dev/watchdog0, ou RuntimeWatchdogSec non posé) : « borne maj »"
+    fi
+    gris "panique si noyau bloqué : softlockup=$(cat /proc/sys/kernel/softlockup_panic) hardlockup=$(cat /proc/sys/kernel/hardlockup_panic) ; redémarrage $(cat /proc/sys/kernel/panic) s après"
+
+    echo
+    gras "Derniers démarrages"
+    local idx debut fin derniere
+    journalctl --list-boots --no-pager -q 2>/dev/null | grep -E '^ *-?[0-9]+ ' | tail -8 | while read -r idx _ _ debut1 debut2 _ _ fin1 fin2 _; do
+        debut="$debut1 $debut2"; fin="$fin1 $fin2"
+        if [[ "$idx" == "0" ]]; then
+            gris "$debut → (en cours)"
+            continue
+        fi
+        derniere="$(journalctl -b "$idx" -n 3 --no-pager -q -o cat 2>/dev/null || true)"
+        if grep -q "Journal stopped" <<<"$derniere"; then
+            vert "$debut → $fin  arrêt propre"
+        else
+            rouge "$debut → $fin  COUPÉ NET (gel, chien de garde, courant ou bouton tenu)"
+        fi
+    done
+
+    echo
+    gras "Ce que les paniques ont laissé (/var/lib/systemd/pstore)"
+    if compgen -G "/var/lib/systemd/pstore/*" >/dev/null; then
+        ls -lt /var/lib/systemd/pstore | head -10
+        gris "lire : sudo less /var/lib/systemd/pstore/<dossier>/dmesg.txt"
+    else
+        gris "rien (aucune panique enregistrée)"
+    fi
+}
+
 cmd_aide() {
     cat <<'AIDE'
 borne — exploitation de la machine du hall
@@ -656,6 +696,7 @@ borne — exploitation de la machine du hall
   borne relance-douce         relance le kiosque après 3 min sans doigt sur l'écran (1 h au plus)
   borne tactile [secondes]    les doigts que le noyau croit posés, puis écoute la dalle (20 s)
   borne redemarre             redémarre la MACHINE (noyau, réglages du démarrage)
+  borne gels                  chien de garde, démarrages coupés net, traces de panique
 
   borne jeton                 change le jeton d'ÉCRAN, relance, et VÉRIFIE
   borne jeton-impression      pose celui du démon Evolis (et l'installe s'il manque)
@@ -698,6 +739,7 @@ case "${1:-aide}" in
     relance-douce)      cmd_relance_douce ;;
     tactile)            shift || true; cmd_tactile "${1:-20}" ;;
     redemarre|reboot)   cmd_redemarre ;;
+    gels)               cmd_gels ;;
     jeton)              cmd_jeton ;;
     jeton-impression)   cmd_jeton_impression ;;
     domaine)            shift || true; cmd_domaine "${1:-}" ;;
