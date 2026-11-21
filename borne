@@ -236,6 +236,48 @@ cmd_relance_douce() {
     done
     jaune "Pas trois minutes de calme en une heure : relance abandonnée (la borne sert)."
 }
+# ── Chrome figé, machine vivante : la surveillance relance le kiosque ───────────────────────────
+# Le 21/11 à 17:34, une minute après la relance de 17:30, le processus GRAPHIQUE de Chrome a planté
+# et il est resté mort (`<defunct>`). Le processus principal vivait encore mais ne dessinait plus :
+# écran figé, page muette, jusqu'à un `borne relance` 40 min plus tard. Le chien de garde n'y peut
+# rien, le noyau va bien. Chrome sain a TOUJOURS un processus graphique vivant : son absence, deux
+# minutes de suite, suffit à relancer. Lancé chaque minute par `borne-surveille.timer`.
+# Garde-fou : 3 relances par heure au plus, pour ne pas boucler si Chrome replante à chaque départ.
+ETAT_SURVEILLE="/run/borne-surveille"
+cmd_surveille() {
+    mkdir -p "$ETAT_SURVEILLE"
+    local principal gpu_vivant=0 manques maintenant recentes
+    principal="$(pgrep -u "$UTILISATEUR" -x chrome -o 2>/dev/null || true)"
+    # Kiosque arrêté exprès (`borne stop`) ou en train de démarrer : on ne juge rien.
+    if [[ -z "$principal" ]] || ! uctl is-active --quiet borne; then
+        rm -f "$ETAT_SURVEILLE/manques"; return 0
+    fi
+    # Moins de 90 s d'âge : Chrome démarre, son processus graphique peut ne pas être là encore.
+    (( $(ps -o etimes= -p "$principal" | tr -d ' ') < 90 )) && return 0
+
+    local pid
+    for pid in $(pgrep -u "$UTILISATEUR" -f -- '^/opt/google/chrome/chrome --type=gpu-process' 2>/dev/null || true); do
+        [[ "$(ps -o stat= -p "$pid" 2>/dev/null)" == Z* ]] || gpu_vivant=1
+    done
+    if (( gpu_vivant )); then rm -f "$ETAT_SURVEILLE/manques"; return 0; fi
+
+    manques=$(( $(cat "$ETAT_SURVEILLE/manques" 2>/dev/null || echo 0) + 1 ))
+    echo "$manques" > "$ETAT_SURVEILLE/manques"
+    echo "Chrome sans processus graphique vivant ($manques min)"
+    (( manques >= 2 )) || return 0
+
+    maintenant="$(date +%s)"
+    recentes="$(awk -v n="$maintenant" '$1 > n - 3600' "$ETAT_SURVEILLE/relances" 2>/dev/null | wc -l)"
+    if (( recentes >= 3 )); then
+        echo "ÉCHEC : déjà $recentes relances dans l'heure, on n'insiste plus (voir « borne journal »)"
+        return 0
+    fi
+    echo "$maintenant" >> "$ETAT_SURVEILLE/relances"
+    rm -f "$ETAT_SURVEILLE/manques"
+    echo "RELANCE du kiosque : processus graphique de Chrome mort"
+    cmd_relance
+}
+
 # Redémarrer la MACHINE — pour prendre un noyau, un réglage du démarrage. À distance, c'était
 # impossible sans le mot de passe du compte : seule cette commande est permise sans lui.
 cmd_redemarre() {
@@ -697,6 +739,7 @@ borne — exploitation de la machine du hall
   borne tactile [secondes]    les doigts que le noyau croit posés, puis écoute la dalle (20 s)
   borne redemarre             redémarre la MACHINE (noyau, réglages du démarrage)
   borne gels                  chien de garde, démarrages coupés net, traces de panique
+  borne surveille             (chaque minute, par minuterie) relance le kiosque si Chrome ne dessine plus
 
   borne jeton                 change le jeton d'ÉCRAN, relance, et VÉRIFIE
   borne jeton-impression      pose celui du démon Evolis (et l'installe s'il manque)
@@ -740,6 +783,7 @@ case "${1:-aide}" in
     tactile)            shift || true; cmd_tactile "${1:-20}" ;;
     redemarre|reboot)   cmd_redemarre ;;
     gels)               cmd_gels ;;
+    surveille)          cmd_surveille ;;
     jeton)              cmd_jeton ;;
     jeton-impression)   cmd_jeton_impression ;;
     domaine)            shift || true; cmd_domaine "${1:-}" ;;

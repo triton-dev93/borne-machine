@@ -322,9 +322,32 @@ Type=oneshot
 ExecStart=/usr/local/bin/borne relance-douce
 TimeoutStartSec=75min
 SERVICE
+
+# ── Chrome figé : la surveillance, chaque minute ─────────────────────────────
+# Le 21/11, le processus graphique de Chrome est mort une minute après la relance de 17:30 : écran
+# figé, machine vivante, 40 min sans borne. `borne surveille` relance le kiosque quand Chrome n'a
+# plus de processus graphique vivant deux minutes de suite (3 fois par heure au plus).
+cat > /etc/systemd/system/borne-surveille.timer <<'TIMER'
+[Unit]
+Description=Surveillance du kiosque de la borne (Chrome figé)
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+AccuracySec=5s
+[Install]
+WantedBy=timers.target
+TIMER
+cat > /etc/systemd/system/borne-surveille.service <<'SERVICE'
+[Unit]
+Description=Surveillance du kiosque de la borne (Chrome figé)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/borne surveille
+SERVICE
 systemctl daemon-reload
 systemctl enable --now borne-relance-nocturne.timer >/dev/null
 systemctl enable --now borne-relance-soir.timer >/dev/null
+systemctl enable --now borne-surveille.timer >/dev/null
 
 # ── Le noyau : épinglé sur celui qui marche ─────────────────────────────────
 # Le 7.0.0-38, posé par les mises à jour automatiques le 07/10, a coïncidé avec les deux gels du
