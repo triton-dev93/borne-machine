@@ -395,7 +395,7 @@ fi
 # Trois gardes :
 #   • le chien de garde MATÉRIEL de la carte mère (Intel TCO). systemd le nourrit chaque minute ;
 #     s'il cesse (noyau figé), la puce redémarre la machine seule. Ubuntu met `iTCO_wdt` en liste
-#     noire : la liste noire ne bloque que le chargement par alias, on le charge par son nom ;
+#     noire, y compris au démarrage : on remplace sa liste par une copie sans lui (plus bas) ;
 #   • un noyau qui se sait bloqué (verrou, processeur accaparé) part en PANIQUE au lieu de rester
 #     figé, et la panique redémarre en 10 s. Le message de panique est gardé dans la mémoire du
 #     microprogramme (efi_pstore) et recopié au démarrage suivant dans /var/lib/systemd/pstore ;
@@ -408,8 +408,20 @@ modprobe iTCO_wdt 2>/dev/null || true
 # au tout début, et après chaque redémarrage il était INACTIF (« Failed to open any watchdog device
 # before the initial transaction completed », vu le 25/11 ; seul le `daemon-reexec` d'un `borne maj`
 # l'armait). On le met dans l'initramfs : il est là avant systemd.
-if ! grep -qx 'iTCO_wdt' /etc/initramfs-tools/modules 2>/dev/null; then
-    printf 'iTCO_wdt\n' >> /etc/initramfs-tools/modules
+# ⚠⚠ Et la liste noire d'Ubuntu VAUT au démarrage : « Module 'iTCO_wdt' is deny-listed (by kmod) »
+# (systemd-modules-load, 25/11). Un fichier de /etc/modprobe.d du MÊME NOM remplace celui de
+# /lib/modprobe.d : on en pose une copie sans la seule ligne iTCO_wdt, pour chaque noyau.
+retouche=0
+for liste in /lib/modprobe.d/blacklist_linux_*.conf; do
+    [[ -e "$liste" ]] || continue
+    copie="/etc/modprobe.d/$(basename "$liste")"
+    nouveau="$(printf '# Copie de %s SANS iTCO_wdt (chien de garde de la borne, voir install.sh)\n' "$liste"; grep -vx 'blacklist iTCO_wdt' "$liste")"
+    if [[ "$(cat "$copie" 2>/dev/null)" != "$nouveau" ]]; then
+        printf '%s\n' "$nouveau" > "$copie"; retouche=1
+    fi
+done
+if (( retouche )) || ! grep -qx 'iTCO_wdt' /etc/initramfs-tools/modules 2>/dev/null; then
+    grep -qx 'iTCO_wdt' /etc/initramfs-tools/modules 2>/dev/null || printf 'iTCO_wdt\n' >> /etc/initramfs-tools/modules
     update-initramfs -u -k all >/dev/null 2>&1 || echo "  ⚠ update-initramfs a échoué : chien de garde inactif au prochain démarrage"
     echo "  chien de garde ajouté à l'initramfs (actif dès le démarrage)"
 fi
