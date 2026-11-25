@@ -698,6 +698,11 @@ cmd_gels() {
     else
         rouge "inactif (pas de /dev/watchdog0, ou RuntimeWatchdogSec non posé) : « borne maj »"
     fi
+    if grep -q 'intel_idle.max_cstate=1' /proc/cmdline; then
+        vert "énergie : veille profonde coupée (intel_idle.max_cstate=1, i915.enable_dc=0)"
+    else
+        jaune "énergie : réglages d'usine (veille profonde permise)"
+    fi
     gris "panique si noyau bloqué : softlockup=$(cat /proc/sys/kernel/softlockup_panic) hardlockup=$(cat /proc/sys/kernel/hardlockup_panic) ; redémarrage $(cat /proc/sys/kernel/panic) s après"
 
     echo

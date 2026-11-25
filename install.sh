@@ -404,6 +404,15 @@ fi
 dire "Chien de garde (gel complet)"
 printf 'iTCO_wdt\n' > /etc/modules-load.d/borne-chien-de-garde.conf
 modprobe iTCO_wdt 2>/dev/null || true
+# ⚠⚠ `modules-load.d` charge le module TROP TARD : systemd cherche son chien de garde une seule fois,
+# au tout début, et après chaque redémarrage il était INACTIF (« Failed to open any watchdog device
+# before the initial transaction completed », vu le 25/11 ; seul le `daemon-reexec` d'un `borne maj`
+# l'armait). On le met dans l'initramfs : il est là avant systemd.
+if ! grep -qx 'iTCO_wdt' /etc/initramfs-tools/modules 2>/dev/null; then
+    printf 'iTCO_wdt\n' >> /etc/initramfs-tools/modules
+    update-initramfs -u -k all >/dev/null 2>&1 || echo "  ⚠ update-initramfs a échoué : chien de garde inactif au prochain démarrage"
+    echo "  chien de garde ajouté à l'initramfs (actif dès le démarrage)"
+fi
 if [[ -e /dev/watchdog0 ]]; then
     mkdir -p /etc/systemd/system.conf.d
     cat > /etc/systemd/system.conf.d/borne-chien-de-garde.conf <<'GARDE'
@@ -433,6 +442,29 @@ SyncIntervalSec=30s
 JOURNAL
 systemctl restart systemd-journald
 echo "  panique → redémarrage en 10 s ; journal écrit toutes les 30 s"
+
+# ── Gel MATÉRIEL : pas d'économie d'énergie profonde ────────────────────────
+# Le 24/11 à 11:28, nouveau gel complet, 27 h sans borne : chien de garde armé, et pourtant ni lui,
+# ni le détecteur de blocage du noyau n'ont réagi, aucune panique. C'est la PLATEFORME qui se
+# bloque, pas Linux. Sur ce ThinkCentre M810z (Kaby Lake, BIOS d'avril 2017), les états de veille
+# profonds du processeur (C-states) et de la puce graphique (DC) sont la cause connue de ce gel.
+# On les coupe : un peu plus de courant, une machine qui ne s'endort plus jusqu'au blocage.
+# Effet au PROCHAIN démarrage. « BORNE_ENERGIE=usine borne maj » rend la main.
+dire "Énergie du processeur et de la puce graphique"
+if [[ "${BORNE_ENERGIE:-}" == "usine" ]]; then
+    rm -f /etc/default/grub.d/60-borne-energie.cfg
+    echo "  réglages d'usine (au prochain démarrage)"
+else
+    cat > /etc/default/grub.d/60-borne-energie.cfg <<'GRUB'
+# Borne : pas d'états de veille profonds (gels complets du 20 et du 24/11). Voir install.sh.
+GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT intel_idle.max_cstate=1 i915.enable_dc=0"
+GRUB
+    echo "  C-states limités à C1, puce graphique sans DC (au prochain démarrage)"
+fi
+update-grub >/dev/null 2>&1
+if grep -q 'intel_idle.max_cstate=1' /proc/cmdline; then
+    echo "  déjà en vigueur dans ce démarrage"
+fi
 
 # ── Alléger : rien ne doit tourner que la borne ─────────────────────────────
 # 3,2 Go de mémoire : chaque démon de bureau compte. Rapports de plantage, collecte « insights »,
